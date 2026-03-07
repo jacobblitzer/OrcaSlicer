@@ -21,6 +21,8 @@
 #include "Format/STL.hpp"
 #include "format.hpp"
 #include "AABBTreeLines.hpp"
+#include "ContourZ.hpp"
+#include "SLA/IndexedMesh.hpp"
 
 #include <float.h>
 #include <oneapi/tbb/blocked_range.h>
@@ -709,6 +711,53 @@ void PrintObject::ironing()
     }
 }
 
+void PrintObject::contour_z()
+{
+    if (this->set_started(posContourZ)) {
+        if (! m_config.zaa_enabled || m_print->config().spiral_mode) {
+            this->set_done(posContourZ);
+            return;
+        }
+        BOOST_LOG_TRIVIAL(debug) << "Z Contouring in parallel - start";
+
+        // Build the indexed mesh (AABB tree) from the model for ray-casting.
+        // We need a copy because its_transform modifies in-place.
+        indexed_triangle_set its = m_model_object->raw_indexed_triangle_set();
+        its_transform(its, trafo_centered());
+        sla::IndexedMesh mesh(its);
+
+        const float min_z = float(m_config.zaa_min_z.value);
+
+        tbb::parallel_for(
+            // Skip layer 0 — no contouring on the first layer (build plate adhesion).
+            tbb::blocked_range<size_t>(1, m_layers.size()),
+            [this, &mesh, min_z](const tbb::blocked_range<size_t>& range) {
+                for (size_t layer_idx = range.begin(); layer_idx < range.end(); ++layer_idx) {
+                    m_print->throw_if_canceled();
+                    Layer *layer = m_layers[layer_idx];
+                    const float layer_print_z = float(layer->print_z);
+                    const float layer_bottom_z = float(layer->print_z - layer->height);
+
+                    for (LayerRegion *region : layer->regions()) {
+                        const PrintRegionConfig &region_config = region->region().config();
+                        if (region_config.zaa_region_disable)
+                            continue;
+
+                        const float perimeter_angle = float(region_config.zaa_minimize_perimeter_height.value);
+                        contour_z_entity_collection(region->perimeters, mesh,
+                            layer_print_z, layer_bottom_z, min_z, perimeter_angle);
+                        contour_z_entity_collection(region->fills, mesh,
+                            layer_print_z, layer_bottom_z, min_z, perimeter_angle);
+                    }
+                }
+            }
+        );
+        m_print->throw_if_canceled();
+        BOOST_LOG_TRIVIAL(debug) << "Z Contouring in parallel - end";
+        this->set_done(posContourZ);
+    }
+}
+
 // BBS
 void PrintObject::clear_overhangs_for_lift()
 {
@@ -1332,6 +1381,13 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "flush_into_support") {
             invalidated |= m_print->invalidate_step(psWipeTower);
             invalidated |= m_print->invalidate_step(psGCodeExport);
+        } else if (
+               opt_key == "zaa_enabled"
+            || opt_key == "zaa_min_z"
+            || opt_key == "zaa_dont_alternate_fill_direction"
+            || opt_key == "zaa_minimize_perimeter_height"
+            || opt_key == "zaa_region_disable") {
+            steps.emplace_back(posContourZ);
         } else {
             // for legacy, if we can't handle this option let's invalidate all steps
             this->invalidate_all_steps();
@@ -1351,15 +1407,17 @@ bool PrintObject::invalidate_step(PrintObjectStep step)
 
     // propagate to dependent steps
     if (step == posPerimeters) {
-		invalidated |= this->invalidate_steps({ posPrepareInfill, posInfill, posIroning, posSimplifyPath, posSimplifyInfill });
+		invalidated |= this->invalidate_steps({ posPrepareInfill, posInfill, posIroning, posContourZ, posSimplifyPath, posSimplifyInfill });
         invalidated |= m_print->invalidate_steps({ psSkirtBrim });
     } else if (step == posPrepareInfill) {
-        invalidated |= this->invalidate_steps({ posInfill, posIroning, posSimplifyPath, posSimplifyInfill });
+        invalidated |= this->invalidate_steps({ posInfill, posIroning, posContourZ, posSimplifyPath, posSimplifyInfill });
     } else if (step == posInfill) {
-        invalidated |= this->invalidate_steps({ posIroning, posSimplifyInfill });
+        invalidated |= this->invalidate_steps({ posIroning, posContourZ, posSimplifyInfill });
         invalidated |= m_print->invalidate_steps({ psSkirtBrim });
+    } else if (step == posIroning) {
+        invalidated |= this->invalidate_steps({ posContourZ });
     } else if (step == posSlice) {
-		invalidated |= this->invalidate_steps({ posPerimeters, posPrepareInfill, posInfill, posIroning, posSupportMaterial, posSimplifyPath, posSimplifyInfill });
+		invalidated |= this->invalidate_steps({ posPerimeters, posPrepareInfill, posInfill, posIroning, posContourZ, posSupportMaterial, posSimplifyPath, posSimplifyInfill });
         invalidated |= m_print->invalidate_steps({ psSkirtBrim });
         m_slicing_params.valid = false;
     } else if (step == posSupportMaterial) {

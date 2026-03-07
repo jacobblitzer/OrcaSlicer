@@ -4045,6 +4045,54 @@ void PrintConfigDef::init_fff_params()
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
+    // Z Anti-Aliasing / Z Contouring settings
+    def = this->add("zaa_enabled", coBool);
+    def->label = L("Enable Z contouring");
+    def->category = L("Quality");
+    def->tooltip = L("Z contouring dynamically adjusts Z heights within layers to follow the actual model surface, "
+                     "reducing visible stair-stepping on top surfaces without requiring smaller layer heights.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("zaa_min_z", coFloat);
+    def->label = L("Minimum Z height");
+    def->category = L("Quality");
+    def->tooltip = L("Minimum distance above the layer bottom that Z contouring will use. "
+                     "Prevents the nozzle from getting too close to the previous layer.");
+    def->sidetext = L("mm");
+    def->min = 0.01;
+    def->max = 1.0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.05));
+
+    def = this->add("zaa_dont_alternate_fill_direction", coBool);
+    def->label = L("Don't alternate fill direction");
+    def->category = L("Quality");
+    def->tooltip = L("When Z contouring is enabled, keep fill direction constant instead of alternating between layers. "
+                     "This can improve surface quality on contoured surfaces.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("zaa_minimize_perimeter_height", coFloat);
+    def->label = L("Perimeter slope threshold");
+    def->category = L("Quality");
+    def->tooltip = L("For external perimeters on contoured surfaces, reduce the Z adjustment based on the surface slope angle. "
+                     "Surfaces steeper than this angle will have their perimeter Z adjustment reduced towards zero. "
+                     "Set to 0 to disable perimeter Z contouring entirely.");
+    def->sidetext = u8"\u00B0";
+    def->min = 0;
+    def->max = 90;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(35));
+
+    def = this->add("zaa_region_disable", coBool);
+    def->label = L("Disable Z contouring for this region");
+    def->category = L("Quality");
+    def->tooltip = L("Disable Z contouring for this print region. Useful for regions where Z contouring "
+                     "would cause issues.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("layer_change_gcode", coString);
     def->label = L("Layer change G-code");
     def->tooltip = L("This G-code is inserted at every layer change after the Z lift.");

@@ -157,6 +157,9 @@ public:
     float width;
     // Height of the extrusion, used for visualization purposes.
     float height;
+    // Z contouring: when true, contour_polyline holds 3D points with per-point Z offsets
+    bool z_contoured = false;
+    Polyline3 contour_polyline;
 
     ExtrusionPath() : mm3_per_mm(-1), width(-1), height(-1), m_role(erNone), m_no_extrusion(false) {}
     ExtrusionPath(ExtrusionRole role) : mm3_per_mm(-1), width(-1), height(-1), m_role(role), m_no_extrusion(false) {}
@@ -167,6 +170,8 @@ public:
         , mm3_per_mm(rhs.mm3_per_mm)
         , width(rhs.width)
         , height(rhs.height)
+        , z_contoured(rhs.z_contoured)
+        , contour_polyline(rhs.contour_polyline)
         , m_can_reverse(rhs.m_can_reverse)
         , m_role(rhs.m_role)
         , m_no_extrusion(rhs.m_no_extrusion)
@@ -176,6 +181,8 @@ public:
         , mm3_per_mm(rhs.mm3_per_mm)
         , width(rhs.width)
         , height(rhs.height)
+        , z_contoured(rhs.z_contoured)
+        , contour_polyline(std::move(rhs.contour_polyline))
         , m_can_reverse(rhs.m_can_reverse)
         , m_role(rhs.m_role)
         , m_no_extrusion(rhs.m_no_extrusion)
@@ -207,6 +214,8 @@ public:
         this->width = rhs.width;
         this->height = rhs.height;
         this->polyline = rhs.polyline;
+        this->z_contoured = rhs.z_contoured;
+        this->contour_polyline = rhs.contour_polyline;
         return *this;
     }
     ExtrusionPath& operator=(ExtrusionPath&& rhs) {
@@ -217,6 +226,8 @@ public:
         this->width = rhs.width;
         this->height = rhs.height;
         this->polyline = std::move(rhs.polyline);
+        this->z_contoured = rhs.z_contoured;
+        this->contour_polyline = std::move(rhs.contour_polyline);
         return *this;
     }
 

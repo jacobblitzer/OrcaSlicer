@@ -1027,6 +1027,11 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt,  interlocking_depth))
     ((ConfigOptionInt,  interlocking_boundary_avoidance))
 
+    // Z Anti-Aliasing / Z Contouring
+    ((ConfigOptionBool,               zaa_enabled))
+    ((ConfigOptionFloat,              zaa_min_z))
+    ((ConfigOptionBool,               zaa_dont_alternate_fill_direction))
+
     // Orca: internal use only
     ((ConfigOptionBool,  calib_flowrate_topinfill_special_order)) // ORCA: special flag for flow rate calibration
 )
@@ -1106,6 +1111,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloatsNullable, filament_ironing_spacing))
     ((ConfigOptionFloatsNullable, filament_ironing_inset))
     ((ConfigOptionFloatsNullable, filament_ironing_speed))
+    // Z Anti-Aliasing / Z Contouring (region-level)
+    ((ConfigOptionFloat,                zaa_minimize_perimeter_height))
+    ((ConfigOptionBool,                 zaa_region_disable))
     // Detect bridging perimeters
     ((ConfigOptionBool, detect_overhang_wall))
     ((ConfigOptionInt, wall_filament))
