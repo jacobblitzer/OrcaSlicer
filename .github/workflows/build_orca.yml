@@ -128,14 +128,14 @@ jobs:
 
       - name: Download macOS arm64 app bundle
         if: contains(inputs.os, 'macos') && inputs.macos-combine-only
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: OrcaSlicer_Mac_bundle_arm64_${{ github.sha }}
           path: ${{ github.workspace }}/mac_bundles/arm64
 
       - name: Download macOS x86_64 app bundle
         if: contains(inputs.os, 'macos') && inputs.macos-combine-only
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: OrcaSlicer_Mac_bundle_x86_64_${{ github.sha }}
           path: ${{ github.workspace }}/mac_bundles/x86_64
