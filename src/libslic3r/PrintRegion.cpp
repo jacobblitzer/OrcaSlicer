@@ -80,6 +80,10 @@ void PrintRegion::collect_object_printing_extruders(const PrintConfig &print_con
     	emplace_extruder(region_config.wall_filament);
     	if (region_config.outer_wall_filament.value > 0)
     	    emplace_extruder(region_config.outer_wall_filament);
+    	if (region_config.overhang_wall_filament.value > 0)
+    	    emplace_extruder(region_config.overhang_wall_filament);
+    	if (region_config.gap_fill_filament.value > 0)
+    	    emplace_extruder(region_config.gap_fill_filament);
     }
     if (region_config.sparse_infill_density.value > 0)
     	emplace_extruder(region_config.sparse_infill_filament);
@@ -89,6 +93,12 @@ void PrintRegion::collect_object_printing_extruders(const PrintConfig &print_con
     	    emplace_extruder(region_config.top_surface_filament);
     	if (region_config.bottom_surface_filament.value > 0)
     	    emplace_extruder(region_config.bottom_surface_filament);
+    	if (region_config.bridge_filament.value > 0)
+    	    emplace_extruder(region_config.bridge_filament);
+    	if (region_config.internal_bridge_filament.value > 0)
+    	    emplace_extruder(region_config.internal_bridge_filament);
+    	if (region_config.ironing_filament.value > 0)
+    	    emplace_extruder(region_config.ironing_filament);
     }
 }
 

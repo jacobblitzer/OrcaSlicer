@@ -1628,12 +1628,20 @@ Sidebar::Sidebar(Plater *parent)
 {
     Choice::register_dynamic_list("support_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("support_interface_filament", &dynamic_filament_list);
+    Choice::register_dynamic_list("support_transition_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("wall_filament", &dynamic_filament_list_1_based);
     Choice::register_dynamic_list("outer_wall_filament", &dynamic_filament_list);
+    Choice::register_dynamic_list("overhang_wall_filament", &dynamic_filament_list);
+    Choice::register_dynamic_list("gap_fill_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("sparse_infill_filament", &dynamic_filament_list_1_based);
     Choice::register_dynamic_list("solid_infill_filament", &dynamic_filament_list_1_based);
     Choice::register_dynamic_list("top_surface_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("bottom_surface_filament", &dynamic_filament_list);
+    Choice::register_dynamic_list("bridge_filament", &dynamic_filament_list);
+    Choice::register_dynamic_list("internal_bridge_filament", &dynamic_filament_list);
+    Choice::register_dynamic_list("ironing_filament", &dynamic_filament_list);
+    Choice::register_dynamic_list("skirt_filament", &dynamic_filament_list);
+    Choice::register_dynamic_list("brim_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("wipe_tower_filament", &dynamic_filament_list);
 
     p->scrolled = new wxPanel(this);

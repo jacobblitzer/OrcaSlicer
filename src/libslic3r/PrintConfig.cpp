@@ -1562,6 +1562,15 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionFloat(0.));
 
+    def = this->add("brim_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Brim");
+    def->category = L("Extruders");
+    def->tooltip = L("Filament to print brim. 0 (Default) means using the same filament as wall_filament.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
     def = this->add("brim_type", coEnum);
     def->label = L("Brim type");
     def->category = L("Support");
@@ -4692,6 +4701,24 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
 
+    def = this->add("overhang_wall_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Overhang wall");
+    def->category = L("Extruders");
+    def->tooltip = L("Filament to print overhang walls. 0 (Default) means using the same filament as wall_filament.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("gap_fill_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Gap fill");
+    def->category = L("Extruders");
+    def->tooltip = L("Filament to print gap fills. 0 (Default) means using the same filament as wall_filament.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
     def = this->add("inner_wall_line_width", coFloatOrPercent);
     def->label = L("Inner wall");
     def->category = L("Quality");
@@ -5411,6 +5438,15 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(50.0));
 
+    def = this->add("skirt_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Skirt");
+    def->category = L("Extruders");
+    def->tooltip = L("Filament to print skirt. 0 (Default) means using the first extruder on the layer.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
     def = this->add("min_skirt_length", coFloat);
     def->label = L("Skirt minimum extrusion length");
     def->full_label = L("Skirt minimum extrusion length");
@@ -5464,6 +5500,33 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Bottom surface");
     def->category = L("Extruders");
     def->tooltip = L("Filament to print bottom surfaces. 0 (Default) means using the same filament as solid_infill_filament.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("bridge_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Bridge");
+    def->category = L("Extruders");
+    def->tooltip = L("Filament to print bridges. 0 (Default) means using the same filament as solid_infill_filament.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("internal_bridge_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Internal bridge");
+    def->category = L("Extruders");
+    def->tooltip = L("Filament to print internal bridges. 0 (Default) means using the same filament as bridge_filament.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("ironing_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Ironing");
+    def->category = L("Extruders");
+    def->tooltip = L("Filament to print ironing. 0 (Default) means using the same filament as solid_infill_filament.");
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
@@ -5833,6 +5896,15 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Filament to print support base and raft. \"Default\" means no specific filament for support and current filament is used.");
     def->min = 0;
     def->mode = comSimple;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("support_transition_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label    = L("Support transition");
+    def->category = L("Support");
+    def->tooltip = L("Filament to print support transitions. 0 (Default) means using the same filament as support_filament.");
+    def->min = 0;
+    def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("support_interface_not_for_body",coBool);

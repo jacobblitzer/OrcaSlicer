@@ -141,10 +141,15 @@ public:
     // Return a zero based extruder from the region, or extruder_override if overriden.
     unsigned int wall_filament(const PrintRegion &region) const;
     unsigned int outer_wall_filament(const PrintRegion &region) const;
+    unsigned int overhang_wall_filament(const PrintRegion &region) const;
+    unsigned int gap_fill_filament(const PrintRegion &region) const;
     unsigned int sparse_infill_filament(const PrintRegion &region) const;
     unsigned int solid_infill_filament(const PrintRegion &region) const;
     unsigned int top_surface_filament(const PrintRegion &region) const;
     unsigned int bottom_surface_filament(const PrintRegion &region) const;
+    unsigned int bridge_filament(const PrintRegion &region) const;
+    unsigned int internal_bridge_filament(const PrintRegion &region) const;
+    unsigned int ironing_filament(const PrintRegion &region) const;
 	// Returns a zero based extruder this eec should be printed with, according to PrintRegion config or extruder_override if overriden.
 	unsigned int extruder(const ExtrusionEntityCollection &extrusions, const PrintRegion &region) const;
 

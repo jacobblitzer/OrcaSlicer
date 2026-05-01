@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(cmake --build:*)",
+      "Bash(gh repo view:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(gh api:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl:*)",
+      "Bash(gh search:*)",
+      "Bash(git clone:*)",
+      "Bash(where:*)",
+      "Bash(cmake:*)",
+      "Bash(\"C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" --version)",
+      "Bash(\"C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" --build . --config Release --target ALL_BUILD -- -m)",
+      "Bash(start:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd Z Contouring \\(ZAA\\) feature for smoother top surfaces\n\nDynamically adjusts Z heights within layers to follow actual model\nsurface geometry, reducing visible stair-stepping on top surfaces\nwithout requiring smaller layer heights. Uses ray-casting against\nthe model mesh via IndexedMesh AABB tree.\n\nNew settings: zaa_enabled, zaa_min_z, zaa_minimize_perimeter_height,\nzaa_region_disable, zaa_dont_alternate_fill_direction.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(git remote add:*)",
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)",
+      "Bash(git checkout:*)",
+      "Bash(dir:*)",
+      "Bash(\"C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe\" C:/Repos/orcaslicer/build/OrcaSlicer.sln /t:Build /p:Configuration=Release /m /nologo)",
+      "Bash(\"C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe\" OrcaSlicer.sln -t:Build -p:Configuration=Release -m -nologo)",
+      "Bash(powershell:*)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe\" \"C:/Repos/orcaslicer/build/OrcaSlicer.sln\" -t:Build -p:Configuration=Release -m -nologo)"
+    ]
+  }
+}

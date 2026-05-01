@@ -825,10 +825,24 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("enable_tower_interface_cooldown_during_tower",
                 have_prime_tower && config->opt_bool("enable_tower_interface_features"));
 
-    for (auto el : {"wall_filament", "outer_wall_filament", "sparse_infill_filament",
-                    "solid_infill_filament", "top_surface_filament", "bottom_surface_filament",
-                    "wipe_tower_filament"})
-        toggle_line(el, true);
+    // Filament-per-feature: show each filament selector only when its feature is active
+    toggle_line("wall_filament", have_perimeters || have_brim);
+    toggle_line("outer_wall_filament", have_perimeters || have_brim);
+    toggle_line("overhang_wall_filament", have_perimeters);
+    toggle_line("gap_fill_filament", have_perimeters);
+    toggle_line("sparse_infill_filament", have_infill);
+    toggle_line("solid_infill_filament", have_infill || has_solid_infill);
+    toggle_line("top_surface_filament", has_top_shell);
+    toggle_line("bottom_surface_filament", has_bottom_shell);
+    toggle_line("bridge_filament", has_solid_infill);
+    toggle_line("internal_bridge_filament", has_solid_infill);
+    toggle_line("ironing_filament", has_ironing);
+    toggle_line("support_filament", have_support_material || have_skirt);
+    toggle_line("support_transition_filament", have_support_material);
+    toggle_line("support_interface_filament", have_support_material && have_support_interface);
+    toggle_line("skirt_filament", have_skirt);
+    toggle_line("brim_filament", have_brim);
+    toggle_line("wipe_tower_filament", have_prime_tower);
 
     bool purge_in_primetower = preset_bundle->printers.get_edited_preset().config.opt_bool("purge_in_prime_tower");
 

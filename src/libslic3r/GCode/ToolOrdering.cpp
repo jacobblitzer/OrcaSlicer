@@ -106,6 +106,22 @@ unsigned int LayerTools::outer_wall_filament(const PrintRegion &region) const
 	return ((this->extruder_override == 0) ? v : this->extruder_override) - 1;
 }
 
+unsigned int LayerTools::overhang_wall_filament(const PrintRegion &region) const
+{
+	int v = region.config().overhang_wall_filament.value;
+	if (v == 0)
+		return wall_filament(region);
+	return ((this->extruder_override == 0) ? v : this->extruder_override) - 1;
+}
+
+unsigned int LayerTools::gap_fill_filament(const PrintRegion &region) const
+{
+	int v = region.config().gap_fill_filament.value;
+	if (v == 0)
+		return wall_filament(region);
+	return ((this->extruder_override == 0) ? v : this->extruder_override) - 1;
+}
+
 unsigned int LayerTools::top_surface_filament(const PrintRegion &region) const
 {
 	int v = region.config().top_surface_filament.value;
@@ -122,6 +138,30 @@ unsigned int LayerTools::bottom_surface_filament(const PrintRegion &region) cons
 	return ((this->extruder_override == 0) ? v : this->extruder_override) - 1;
 }
 
+unsigned int LayerTools::bridge_filament(const PrintRegion &region) const
+{
+	int v = region.config().bridge_filament.value;
+	if (v == 0)
+		return solid_infill_filament(region);
+	return ((this->extruder_override == 0) ? v : this->extruder_override) - 1;
+}
+
+unsigned int LayerTools::internal_bridge_filament(const PrintRegion &region) const
+{
+	int v = region.config().internal_bridge_filament.value;
+	if (v == 0)
+		return bridge_filament(region);
+	return ((this->extruder_override == 0) ? v : this->extruder_override) - 1;
+}
+
+unsigned int LayerTools::ironing_filament(const PrintRegion &region) const
+{
+	int v = region.config().ironing_filament.value;
+	if (v == 0)
+		return solid_infill_filament(region);
+	return ((this->extruder_override == 0) ? v : this->extruder_override) - 1;
+}
+
 // Returns a zero based extruder this eec should be printed with, according to PrintRegion config or extruder_override if overriden.
 unsigned int LayerTools::extruder(const ExtrusionEntityCollection &extrusions, const PrintRegion &region) const
 {
@@ -131,32 +171,60 @@ unsigned int LayerTools::extruder(const ExtrusionEntityCollection &extrusions, c
 	// 1 based extruder ID.
     unsigned int extruder = 1;
     if (this->extruder_override == 0) {
+        // Determine the dominant role of this extrusion collection.
+        ExtrusionRole role = erNone;
+        for (const ExtrusionEntity *ee : extrusions.entities) {
+            role = ee->role();
+            if (role != erNone)
+                break;
+        }
+
         if (extrusions.has_infill()) {
-            // Check for specific solid infill sub-roles before falling back to generic solid_infill_filament.
-            ExtrusionRole role = erNone;
-            for (const ExtrusionEntity *ee : extrusions.entities) {
-                role = ee->role();
-                if (role != erNone)
-                    break;
-            }
+            // Check for specific infill sub-roles before falling back to generic buckets.
             if (role == erTopSolidInfill)
                 return this->top_surface_filament(region);
             else if (role == erBottomSurface)
                 return this->bottom_surface_filament(region);
+            else if (role == erBridgeInfill)
+                return this->bridge_filament(region);
+            else if (role == erInternalBridgeInfill)
+                return this->internal_bridge_filament(region);
+            else if (role == erIroning)
+                return this->ironing_filament(region);
             else if (is_solid_infill(role))
                 extruder = region.config().solid_infill_filament;
             else
                 extruder = region.config().sparse_infill_filament;
         } else {
-            // Check for outer wall vs generic wall.
-            ExtrusionRole role = erNone;
-            for (const ExtrusionEntity *ee : extrusions.entities) {
-                role = ee->role();
-                if (role != erNone)
-                    break;
+            // Check for specific perimeter/wall sub-roles.
+            if (role == erExternalPerimeter) {
+                // Only route to outer_wall_filament if ALL entities are external perimeters.
+                // Mixed collections (inner + outer) fall through to wall_filament.
+                bool all_external = !extrusions.entities.empty();
+                for (const ExtrusionEntity *ee : extrusions.entities) {
+                    if (ee->role() != erExternalPerimeter) { all_external = false; break; }
+                }
+                if (all_external)
+                    return this->outer_wall_filament(region);
+            } else if (role == erGapFill)
+                return this->gap_fill_filament(region);
+            else if (role == erOverhangPerimeter) {
+                // Single-role check found overhang as first entity.
+                // For mixed loops, do a full scan: only route to overhang filament if ALL paths are overhang.
+                bool all_overhang = !extrusions.entities.empty();
+                for (const ExtrusionEntity *ee : extrusions.entities) {
+                    if (const auto *loop = dynamic_cast<const ExtrusionLoop*>(ee)) {
+                        for (const ExtrusionPath &p : loop->paths) {
+                            if (p.role() != erOverhangPerimeter) { all_overhang = false; break; }
+                        }
+                    } else if (ee->role() != erOverhangPerimeter) {
+                        all_overhang = false;
+                    }
+                    if (!all_overhang) break;
+                }
+                if (all_overhang)
+                    return this->overhang_wall_filament(region);
             }
-            if (role == erExternalPerimeter)
-                return this->outer_wall_filament(region);
             extruder = region.config().wall_filament.value;
         }
     } else
@@ -731,32 +799,48 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                     if (layerCount == 0) {
                         firstLayerExtruders.emplace_back((extruder_override == 0) ? region.config().wall_filament.value : extruder_override);
                     }
-                    // Also emit outer_wall_filament if it differs from wall_filament.
-                    if (extruder_override == 0 && region.config().outer_wall_filament.value > 0) {
+                    // Also emit per-role wall filaments if they differ from wall_filament.
+                    if (extruder_override == 0) {
                         bool has_external = false;
+                        bool has_overhang = false;
                         for (const auto& eec : layerm->perimeters.entities) {
                             const auto *coll = dynamic_cast<const ExtrusionEntityCollection*>(eec);
                             if (coll) {
                                 for (const ExtrusionEntity *e : coll->entities) {
-                                    if (e->role() == erExternalPerimeter) { has_external = true; break; }
+                                    if (e->role() == erExternalPerimeter) { has_external = true; }
+                                    if (const auto *loop = dynamic_cast<const ExtrusionLoop*>(e)) {
+                                        for (const ExtrusionPath &p : loop->paths) {
+                                            if (p.role() == erOverhangPerimeter) { has_overhang = true; break; }
+                                        }
+                                    } else if (e->role() == erOverhangPerimeter) {
+                                        has_overhang = true;
+                                    }
+                                    if (has_external && has_overhang) break;
                                 }
-                            } else if (eec->role() == erExternalPerimeter) {
-                                has_external = true;
+                            } else {
+                                if (eec->role() == erExternalPerimeter) has_external = true;
+                                if (eec->role() == erOverhangPerimeter) has_overhang = true;
                             }
-                            if (has_external) break;
+                            if (has_external && has_overhang) break;
                         }
-                        if (has_external)
+                        if (has_external && region.config().outer_wall_filament.value > 0)
                             layer_tools.extruders.emplace_back(region.config().outer_wall_filament.value);
+                        if (has_overhang && region.config().overhang_wall_filament.value > 0)
+                            layer_tools.extruders.emplace_back(region.config().overhang_wall_filament.value);
                     }
                 }
 
                 layer_tools.has_object = true;
             }
 
-            bool has_infill         = false;
-            bool has_solid_infill   = false;
-            bool has_top_surface    = false;
-            bool has_bottom_surface = false;
+            bool has_infill           = false;
+            bool has_solid_infill     = false;
+            bool has_top_surface      = false;
+            bool has_bottom_surface   = false;
+            bool has_bridge           = false;
+            bool has_internal_bridge  = false;
+            bool has_ironing          = false;
+            bool has_gap_fill         = false;
             bool something_nonoverriddable = false;
             for (const ExtrusionEntity *ee : layerm->fills.entities) {
                 // fill represents infill extrusions of a single island.
@@ -766,6 +850,14 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                     has_top_surface = true;
                 else if (role == erBottomSurface)
                     has_bottom_surface = true;
+                if (role == erBridgeInfill)
+                    has_bridge = true;
+                if (role == erInternalBridgeInfill)
+                    has_internal_bridge = true;
+                if (role == erIroning)
+                    has_ironing = true;
+                if (role == erGapFill)
+                    has_gap_fill = true;
                 if (is_solid_infill(role))
                     has_solid_infill = true;
                 else if (role != erNone)
@@ -783,15 +875,23 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
 	                    layer_tools.extruders.emplace_back(region.config().solid_infill_filament);
 	                if (has_infill)
 	                    layer_tools.extruders.emplace_back(region.config().sparse_infill_filament);
-	                // Emit per-role filament overrides when they differ from solid_infill_filament.
+	                // Emit per-role filament overrides when they differ from parent bucket.
 	                if (has_top_surface && region.config().top_surface_filament.value > 0)
 	                    layer_tools.extruders.emplace_back(region.config().top_surface_filament.value);
 	                if (has_bottom_surface && region.config().bottom_surface_filament.value > 0)
 	                    layer_tools.extruders.emplace_back(region.config().bottom_surface_filament.value);
+	                if (has_bridge && region.config().bridge_filament.value > 0)
+	                    layer_tools.extruders.emplace_back(region.config().bridge_filament.value);
+	                if (has_internal_bridge && region.config().internal_bridge_filament.value > 0)
+	                    layer_tools.extruders.emplace_back(region.config().internal_bridge_filament.value);
+	                if (has_ironing && region.config().ironing_filament.value > 0)
+	                    layer_tools.extruders.emplace_back(region.config().ironing_filament.value);
+	                if (has_gap_fill && region.config().gap_fill_filament.value > 0)
+	                    layer_tools.extruders.emplace_back(region.config().gap_fill_filament.value);
             	} else if (has_solid_infill || has_infill)
             		layer_tools.extruders.emplace_back(extruder_override);
             }
-            if (has_solid_infill || has_infill)
+            if (has_solid_infill || has_infill || has_gap_fill)
                 layer_tools.has_object = true;
         }
         layerCount++;
@@ -800,20 +900,33 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
     sort_remove_duplicates(firstLayerExtruders);
     const_cast<PrintObject&>(object).object_first_layer_wall_extruders = firstLayerExtruders;
 
+    // Register brim filament on the first layer if configured.
+    if (object.config().brim_filament.value > 0 && !m_layer_tools.empty()) {
+        LayerTools &first_layer_tools = m_layer_tools.front();
+        first_layer_tools.extruders.push_back(object.config().brim_filament.value);
+        sort_remove_duplicates(first_layer_tools.extruders);
+    }
+
     // Collect the support extruders.
     for (auto support_layer : object.support_layers()) {
         LayerTools   &layer_tools   = this->tools_for_layer(support_layer->print_z);
         ExtrusionRole role          = support_layer->support_fills.role();
-        bool          has_support   = false;
-        bool          has_interface = false;
+        bool          has_support_base = false;
+        bool          has_transition   = false;
+        bool          has_interface    = false;
         for (const ExtrusionEntity *ee : support_layer->support_fills.entities) {
             ExtrusionRole er = ee->role();
-            if (er == erSupportMaterial || er == erSupportTransition) has_support = true;
+            if (er == erSupportMaterial) has_support_base = true;
+            if (er == erSupportTransition) has_transition = true;
             if (er == erSupportMaterialInterface) has_interface = true;
-            if (has_support && has_interface) break;
+            if (has_support_base && has_transition && has_interface) break;
         }
+        bool has_support = has_support_base || has_transition;
         unsigned int extruder_support   = object.config().support_filament.value;
         unsigned int extruder_interface = object.config().support_interface_filament.value;
+        unsigned int extruder_transition = object.config().support_transition_filament.value;
+        // Transition falls back to support filament if 0.
+        if (extruder_transition == 0) extruder_transition = extruder_support;
         if (has_support) {
             if (extruder_support > 0 || !has_interface || extruder_interface == 0 || layer_tools.has_object)
                 layer_tools.extruders.push_back(extruder_support);
@@ -843,6 +956,9 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
             }
         }
         if (has_interface) layer_tools.extruders.push_back(extruder_interface);
+        // Register transition filament if it differs from support filament.
+        if (has_transition && extruder_transition != extruder_support && extruder_transition > 0)
+            layer_tools.extruders.push_back(extruder_transition);
         if (has_support || has_interface) {
             layer_tools.has_support = true;
             layer_tools.wiping_extrusions().is_support_overriddable_and_mark(role, object);
@@ -1490,6 +1606,16 @@ void ToolOrdering::mark_skirt_layers(const PrintConfig &config, coordf_t max_lay
         }
         i = j;
     }
+
+    // Register skirt filament extruder on skirt layers if configured.
+    if (config.skirt_filament.value > 0) {
+        for (auto &lt : m_layer_tools) {
+            if (lt.has_skirt) {
+                lt.extruders.push_back(config.skirt_filament.value);
+                sort_remove_duplicates(lt.extruders);
+            }
+        }
+    }
 }
 
 // Assign a pointer to a custom G-code to the respective ToolOrdering::LayerTools.
@@ -1652,7 +1778,13 @@ bool WipingExtrusions::is_support_overriddable(const ExtrusionRole role, const P
     if (role == erMixed) {
         return object.config().support_filament == 0 || object.config().support_interface_filament == 0;
     }
-    else if (role == erSupportMaterial || role == erSupportTransition) {
+    else if (role == erSupportMaterial) {
+        return object.config().support_filament == 0;
+    }
+    else if (role == erSupportTransition) {
+        unsigned int transition_fil = object.config().support_transition_filament.value;
+        // If transition filament is explicitly set, it's not overriddable.
+        if (transition_fil > 0) return false;
         return object.config().support_filament == 0;
     }
     else if (role == erSupportMaterialInterface) {

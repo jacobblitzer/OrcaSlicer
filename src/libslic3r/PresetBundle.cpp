@@ -3300,11 +3300,17 @@ DynamicPrintConfig PresetBundle::full_fff_config(bool apply_extruder, std::optio
     //BBS: add logic for settings check between different system presets
     out.erase("different_settings_to_system");
 
-    static const char* keys[] = {"support_filament", "support_interface_filament", "wipe_tower_filament"};
+    static const char* keys[] = {
+        "support_filament", "support_interface_filament", "support_transition_filament", "wipe_tower_filament",
+        "outer_wall_filament", "overhang_wall_filament", "gap_fill_filament",
+        "top_surface_filament", "bottom_surface_filament",
+        "bridge_filament", "internal_bridge_filament", "ironing_filament",
+        "skirt_filament", "brim_filament"
+    };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++ i) {
         std::string key = std::string(keys[i]);
         auto *opt = dynamic_cast<ConfigOptionInt*>(out.option(key, false));
-        assert(opt != nullptr);
+        if (opt == nullptr) continue;
         opt->value = boost::algorithm::clamp<int>(opt->value, 0, int(num_filaments));
     }
 

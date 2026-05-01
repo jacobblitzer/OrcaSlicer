@@ -4135,21 +4135,16 @@ namespace ProcessLayer
 namespace Skirt {
     static void skirt_loops_per_extruder_all_printing(const Print &print, const ExtrusionEntityCollection &skirt, const LayerTools &layer_tools, std::map<unsigned int, std::pair<size_t, size_t>> &skirt_loops_per_extruder_out)
     {
-        // Prime all extruders printing over the 1st layer over the skirt lines.
         size_t n_loops = skirt.entities.size();
-        size_t n_tools = layer_tools.extruders.size();
-        size_t lines_per_extruder = (n_loops + n_tools - 1) / n_tools;
 
-        // BBS. Extrude skirt with first extruder if min_skirt_length is zero
-        //ORCA: Always extrude skirt with first extruder, independantly of if the minimum skirt length is zero or not. The code below
-        // is left as a placeholder for when a multiextruder support is implemented. Then we will need to extrude the skirt loops for each extruder.
-        //const PrintConfig &config = print.config();
-        //if (config.min_skirt_length.value < EPSILON) {
-            skirt_loops_per_extruder_out[layer_tools.extruders.front()] = std::pair<size_t, size_t>(0, n_loops);
-        //} else {
-        //    for (size_t i = 0; i < n_loops; i += lines_per_extruder)
-        //        skirt_loops_per_extruder_out[layer_tools.extruders[i / lines_per_extruder]] = std::pair<size_t, size_t>(i, std::min(i + lines_per_extruder, n_loops));
-        //}
+        // Use configured skirt filament if set, otherwise use the first extruder on the layer.
+        unsigned int skirt_ext;
+        int skirt_fil = print.config().skirt_filament.value;
+        if (skirt_fil > 0 && layer_tools.has_extruder(skirt_fil - 1))
+            skirt_ext = skirt_fil - 1;
+        else
+            skirt_ext = layer_tools.extruders.front();
+        skirt_loops_per_extruder_out[skirt_ext] = std::pair<size_t, size_t>(0, n_loops);
     }
 
     static std::map<unsigned int, std::pair<size_t, size_t>> make_skirt_loops_per_extruder_1st_layer(
@@ -4323,6 +4318,37 @@ std::string GCode::generate_skirt(const Print &print,
             m_avoid_crossing_perimeters.disable_once();
     }
     return gcode;
+}
+
+// Check whether any wall sub-filament is configured to differ from the base wall_filament.
+// When true, perimeter island collections must be split per-entity so that inner walls and
+// outer walls can route to different extruders.
+static bool needs_per_entity_wall_routing(const PrintRegionConfig &config)
+{
+    unsigned int base = config.wall_filament.value;
+    return (config.outer_wall_filament.value > 0 && (unsigned int)config.outer_wall_filament.value != base) ||
+           (config.overhang_wall_filament.value > 0 && (unsigned int)config.overhang_wall_filament.value != base) ||
+           (config.gap_fill_filament.value > 0 && (unsigned int)config.gap_fill_filament.value != base);
+}
+
+// Returns a 0-based extruder ID for a single perimeter entity based on its role.
+static unsigned int wall_extruder_for_entity(
+    const ExtrusionEntity       *entity,
+    const LayerTools            &layer_tools,
+    const PrintRegion           &region)
+{
+    ExtrusionRole role = entity->role();
+
+    // ExtrusionLoop::role() scans its paths and may return erMixed.
+    // For mixed loops (some overhang, some not), fall through to wall_filament.
+    if (role == erExternalPerimeter)
+        return layer_tools.outer_wall_filament(region);
+    else if (role == erOverhangPerimeter)
+        return layer_tools.overhang_wall_filament(region);
+    else if (role == erGapFill)
+        return layer_tools.gap_fill_filament(region);
+    else
+        return layer_tools.wall_filament(region);
 }
 
 // In sequential mode, process_layer is called once per each object and its copy,
@@ -4748,17 +4774,32 @@ LayerResult GCode::process_layer(
                     if (interface_dontcare)
                         interface_extruder = dontcare_extruder;
                 }
+                // Determine the transition extruder.
+                unsigned int transition_extruder = object.config().support_transition_filament.value;
+                bool         transition_dontcare = (transition_extruder == 0);
+                if (transition_dontcare)
+                    transition_extruder = support_extruder; // fallback
+                else
+                    transition_extruder -= 1; // convert to 0-based
+
                 // Both the support and the support interface are printed with the same extruder, therefore
                 // the interface may be interleaved with the support base.
-                bool single_extruder = ! has_support || support_extruder == interface_extruder;
+                bool all_same = (! has_support || support_extruder == interface_extruder) &&
+                                (transition_dontcare || transition_extruder == support_extruder);
                 // Assign an extruder to the base.
                 ObjectByExtruder &obj = object_by_extruder(by_extruder, has_support ? support_extruder : interface_extruder, &layer_to_print - layers.data(), layers.size());
                 obj.support = &support_layer.support_fills;
-                obj.support_extrusion_role = single_extruder ? erMixed : erSupportMaterial;
-                if (! single_extruder && has_interface) {
+                obj.support_extrusion_role = all_same ? erMixed : erSupportMaterial;
+                if (! all_same && has_interface) {
                     ObjectByExtruder &obj_interface = object_by_extruder(by_extruder, interface_extruder, &layer_to_print - layers.data(), layers.size());
                     obj_interface.support = &support_layer.support_fills;
                     obj_interface.support_extrusion_role = erSupportMaterialInterface;
+                }
+                // Assign transition entities to their own extruder if it differs from support base.
+                if (! all_same && !transition_dontcare && transition_extruder != support_extruder) {
+                    ObjectByExtruder &obj_transition = object_by_extruder(by_extruder, transition_extruder, &layer_to_print - layers.data(), layers.size());
+                    obj_transition.support = &support_layer.support_fills;
+                    obj_transition.support_extrusion_role = erSupportTransition;
                 }
             }
         }
@@ -4814,6 +4855,44 @@ LayerResult GCode::process_layer(
                         if (extrusions->entities.empty()) // This shouldn't happen but first_point() would fail.
                             continue;
 
+                        // Per-entity wall routing: when wall sub-filaments differ (e.g. outer_wall_filament != wall_filament),
+                        // split the island's perimeter collection so each entity routes to its correct extruder individually.
+                        // Without this, the entire island (inner + outer walls) would go to one filament based on the first entity's role.
+                        if (entity_type == ObjectByExtruder::Island::Region::PERIMETERS &&
+                            layer_tools.extruder_override == 0 &&
+                            needs_per_entity_wall_routing(region.config()))
+                        {
+                            // Group entities by their individual target extruder.
+                            std::map<unsigned int, std::vector<ExtrusionEntity*>> grouped;
+                            for (ExtrusionEntity *entity : extrusions->entities) {
+                                unsigned int ext_id = wall_extruder_for_entity(entity, layer_tools, region);
+                                if (!layer_tools.has_extruder(ext_id))
+                                    ext_id = layer_tools.extruders.back();
+                                grouped[ext_id].push_back(entity);
+                            }
+
+                            // Store each group in the appropriate extruder bucket.
+                            for (auto &[ext_id, entities] : grouped) {
+                                std::vector<ObjectByExtruder::Island> &islands = object_islands_by_extruder(
+                                    by_extruder, ext_id,
+                                    &layer_to_print - layers.data(),
+                                    layers.size(), n_slices+1);
+                                for (size_t i = 0; i <= n_slices; ++i) {
+                                    bool   last = i == n_slices;
+                                    size_t island_idx = last ? n_slices : slices_test_order[i];
+                                    if (last || point_inside_surface(island_idx, extrusions->first_point())) {
+                                        if (islands[island_idx].by_region.empty())
+                                            islands[island_idx].by_region.assign(print.num_print_regions(), ObjectByExtruder::Island::Region());
+                                        auto &reg = islands[island_idx].by_region[region.print_region_id()];
+                                        for (ExtrusionEntity *e : entities)
+                                            reg.perimeters.push_back(e);
+                                        break;
+                                    }
+                                }
+                            }
+                        } else {
+                        // Original bulk routing: entire collection goes to one extruder.
+
                         // This extrusion is part of certain Region, which tells us which extruder should be used for it:
                         int correct_extruder_id = layer_tools.extruder(*extrusions, region);
 
@@ -4864,6 +4943,7 @@ LayerResult GCode::process_layer(
                                 }
                             }
                         }
+                        } // end else (bulk routing)
                     }
                 }
             } // for regions
@@ -5284,15 +5364,20 @@ LayerResult GCode::process_layer(
                     //BBS: add brim by obj by extruder
                     if (first_layer) {
                         if (this->m_objsWithBrim.find(instance_to_print.print_object.id()) != this->m_objsWithBrim.end() && !print_wipe_extrusions) {
-                            this->set_origin(0., 0.);
-                            m_avoid_crossing_perimeters.use_external_mp();
-                            for (const ExtrusionEntity* ee : print.m_brimMap.at(instance_to_print.print_object.id()).entities) {
-                                gcode += this->extrude_entity(*ee, "brim", m_config.support_speed.value);
+                            // Check if brim should be printed with this extruder.
+                            unsigned int brim_fil = instance_to_print.print_object.config().brim_filament.value;
+                            bool print_brim = (brim_fil == 0) || ((brim_fil - 1) == extruder_id);
+                            if (print_brim) {
+                                this->set_origin(0., 0.);
+                                m_avoid_crossing_perimeters.use_external_mp();
+                                for (const ExtrusionEntity* ee : print.m_brimMap.at(instance_to_print.print_object.id()).entities) {
+                                    gcode += this->extrude_entity(*ee, "brim", m_config.support_speed.value);
+                                }
+                                m_avoid_crossing_perimeters.use_external_mp(false);
+                                // Allow a straight travel move to the first object point.
+                                m_avoid_crossing_perimeters.disable_once();
+                                this->m_objsWithBrim.erase(instance_to_print.print_object.id());
                             }
-                            m_avoid_crossing_perimeters.use_external_mp(false);
-                            // Allow a straight travel move to the first object point.
-                            m_avoid_crossing_perimeters.disable_once();
-                            this->m_objsWithBrim.erase(instance_to_print.print_object.id());
                         }
                     }
                     // When starting a new object, use the external motion planner for the first travel move.
@@ -6027,7 +6112,16 @@ std::string GCode::extrude_support(const ExtrusionEntityCollection &support_fill
         extrusions.reserve(support_fills.entities.size());
         for (ExtrusionEntity* ee : support_fills.entities) {
             const auto role = ee->role();
-            if ((role == support_extrusion_role) || (support_extrusion_role == erMixed && role != erIroning)) {
+            if (support_extrusion_role == erMixed) {
+                // Mixed: print all support roles (except ironing).
+                if (role != erIroning)
+                    extrusions.emplace_back(ee);
+            } else if (support_extrusion_role == erSupportMaterial) {
+                // Base support: print both erSupportMaterial and erSupportTransition
+                // (transition falls under base support unless routed separately).
+                if (role == erSupportMaterial || role == erSupportTransition)
+                    extrusions.emplace_back(ee);
+            } else if (role == support_extrusion_role) {
                 extrusions.emplace_back(ee);
             }
         }

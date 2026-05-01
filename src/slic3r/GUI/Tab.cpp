@@ -2593,10 +2593,18 @@ void TabPrint::build()
         optgroup = page->new_optgroup(L("Filament for Features"), L"param_filament_for_features");
         optgroup->append_single_option_line("wall_filament", "multimaterial_settings_filament_for_features#walls");
         optgroup->append_single_option_line("outer_wall_filament", "multimaterial_settings_filament_for_features#walls");
+        optgroup->append_single_option_line("overhang_wall_filament", "multimaterial_settings_filament_for_features#walls");
+        optgroup->append_single_option_line("gap_fill_filament", "multimaterial_settings_filament_for_features#walls");
         optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
         optgroup->append_single_option_line("solid_infill_filament", "multimaterial_settings_filament_for_features#solid-infill");
         optgroup->append_single_option_line("top_surface_filament", "multimaterial_settings_filament_for_features#solid-infill");
         optgroup->append_single_option_line("bottom_surface_filament", "multimaterial_settings_filament_for_features#solid-infill");
+        optgroup->append_single_option_line("bridge_filament", "multimaterial_settings_filament_for_features#solid-infill");
+        optgroup->append_single_option_line("internal_bridge_filament", "multimaterial_settings_filament_for_features#solid-infill");
+        optgroup->append_single_option_line("ironing_filament", "multimaterial_settings_filament_for_features#solid-infill");
+        optgroup->append_single_option_line("support_transition_filament", "multimaterial_settings_filament_for_features#support");
+        optgroup->append_single_option_line("skirt_filament", "multimaterial_settings_filament_for_features#skirt");
+        optgroup->append_single_option_line("brim_filament", "multimaterial_settings_filament_for_features#brim");
         optgroup->append_single_option_line("wipe_tower_filament", "multimaterial_settings_filament_for_features#wipe-tower");
 
         optgroup = page->new_optgroup(L("Ooze prevention"), L"param_ooze_prevention");
