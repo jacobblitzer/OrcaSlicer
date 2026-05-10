@@ -13,6 +13,7 @@
 #include "GCode/PrintExtents.hpp"
 #include "GCode/Thumbnails.hpp"
 #include "GCode/WipeTower.hpp"
+#include "PylonInjection.hpp"
 #include "ShortestPath.hpp"
 #include "Print.hpp"
 #include "Utils.hpp"
@@ -4116,11 +4117,84 @@ namespace ProcessLayer
             assert(custom_gcode->type != CustomGCode::ToolChange);
 
             CustomGCode::Type   gcode_type = custom_gcode->type;
-            // Orca: pylon injection events are handled separately (see Task 8).
-            // Bail out of the existing text-injection path so PylonInject's JSON
-            // payload is never written to the G-code as raw text.
-            if (gcode_type == CustomGCode::PylonInject)
+            // Orca: pylon injection — synthesize a bottom-up injection block per event.
+            // The Item's extra carries a JSON-encoded vector<PylonInjection::Event> (batched
+            // because the existing scheduler only consumes one Item per layer).
+            if (gcode_type == CustomGCode::PylonInject) {
+                const std::vector<PylonInjection::Event> events = PylonInjection::from_item_batch(*custom_gcode);
+                if (events.empty())
+                    return gcode;
+
+                const double max_descent_cfg = config.pylon_max_descent_depth.value;
+                const unsigned int saved_filament = gcodegen.writer().filament() ? gcodegen.writer().filament()->id() : 0;
+
+                std::ostringstream out;
+                for (const PylonInjection::Event &ev : events) {
+                    // Belt-and-braces validation (the scheduler already enforces this).
+                    if (!ev.is_valid()) {
+                        BOOST_LOG_TRIVIAL(error) << "pylon-injection: dropping invalid event id=" << ev.pylon_id;
+                        continue;
+                    }
+                    if (max_descent_cfg > 0.0 && (ev.z_top - ev.z_bottom) > max_descent_cfg + 1e-6) {
+                        BOOST_LOG_TRIVIAL(error) << "pylon-injection: event id=" << ev.pylon_id
+                                                 << " requested descent " << (ev.z_top - ev.z_bottom)
+                                                 << " mm exceeds pylon_max_descent_depth=" << max_descent_cfg
+                                                 << "; skipping.";
+                        continue;
+                    }
+
+                    out << ";PYLON_INJECT_START id=" << ev.pylon_id
+                        << " x=" << ev.x << " y=" << ev.y
+                        << " z_bottom=" << ev.z_bottom << " z_top=" << ev.z_top
+                        << " dE=" << ev.dE << " filament=" << ev.filament_id << "\n";
+
+                    // Optional tool change to event's filament. V1: no wipe-tower trip.
+                    const bool need_tc_in = ((int)saved_filament != ev.filament_id);
+                    if (need_tc_in)
+                        out << gcodegen.writer().set_extruder((unsigned)ev.filament_id);
+
+                    // Retract before the out-of-plane travel.
+                    out << gcodegen.writer().retract();
+
+                    // Travel to (x, y, z_bottom) at descent speed (no extrusion).
+                    out << gcodegen.writer().set_speed(ev.descent_speed, "pylon: descent");
+                    out << gcodegen.writer().travel_to_xy(Vec2d(ev.x, ev.y), " ; pylon: travel to center");
+                    out << gcodegen.writer().travel_to_z(ev.z_bottom, " ; pylon: descend to floor", /*force=*/true);
+
+                    // Unretract for extrusion.
+                    out << gcodegen.writer().unretract();
+
+                    // Ascending extrude segments. dE distributed linearly with dz across [z_bottom, z_top].
+                    const double total_dz = ev.z_top - ev.z_bottom;
+                    const double dE_per_dz = (total_dz > 0.0) ? (ev.dE / total_dz) : 0.0;
+                    out << gcodegen.writer().set_speed(ev.extrude_speed, "pylon: extrude");
+                    double cur_z = ev.z_bottom;
+                    while (cur_z < ev.z_top - 1e-6) {
+                        const double next_z = std::min(cur_z + ev.step_height, ev.z_top);
+                        const double dz_seg = next_z - cur_z;
+                        const double dE_seg = dE_per_dz * dz_seg;
+                        out << gcodegen.writer().extrude_to_xyz(Vec3d(ev.x, ev.y, next_z), dE_seg, " ; pylon: extrude segment");
+                        cur_z = next_z;
+                    }
+
+                    // Retract again to leave the toolhead in the same state subsequent
+                    // travels expect (next extrusion will unretract before its first move).
+                    out << gcodegen.writer().retract();
+
+                    // Cooling dwell.
+                    if (ev.dwell_ms > 0) {
+                        out << "G4 P" << ev.dwell_ms << " ; pylon: cooling dwell\n";
+                    }
+
+                    // Tool change back to the layer's prior filament if we switched.
+                    if (need_tc_in)
+                        out << gcodegen.writer().set_extruder(saved_filament);
+
+                    out << ";PYLON_INJECT_END\n";
+                }
+                gcode += out.str();
                 return gcode;
+            }
             bool  				color_change = gcode_type == CustomGCode::ColorChange;
             bool 				tool_change = gcode_type == CustomGCode::ToolChange;
             // Tool Change is applied as Color Change for a single extruder printer only.
