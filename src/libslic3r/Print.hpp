@@ -92,7 +92,13 @@ enum PrintStep {
 
 enum PrintObjectStep {
     posSlice, posPerimeters,posEstimateCurledExtrusions, posPrepareInfill,
-    posInfill, posIroning, posContouring, posSupportMaterial, posSimplifyPath, posSimplifySupportPath,
+    posInfill, posIroning, posContouring,
+    // Orca: pylon injection — produces the per-pylon event list (stored on
+    // Model::custom_gcode_per_print_z) consumed by the G-code emitter. Runs
+    // after infill so footprint subtraction is already in place, and before
+    // support so support generation can be informed in the future.
+    posSchedulePylonInjection,
+    posSupportMaterial, posSimplifyPath, posSimplifySupportPath,
     // BBS
     posDetectOverhangsForLift,
     posSimplifyWall, posSimplifyInfill,
@@ -507,6 +513,9 @@ private:
     void contour_z();
     // Orca: pylon injection — populate m_pylon_footprints_per_layer before make_fills.
     void compute_pylon_footprints();
+    // Orca: pylon injection — walk pylon volumes × instances, generate the event list,
+    // and append CustomGCode::Item entries (type PylonInject) to Model::custom_gcode_per_print_z.
+    void schedule_pylon_injections();
     void generate_support_material();
     void estimate_curled_extrusions();
     void simplify_extrusion_path();

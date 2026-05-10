@@ -409,6 +409,12 @@ public:
     };
     virtual ApplyStatus     apply(const Model &model, DynamicPrintConfig config, bool extruder_applied = false) = 0;
     const Model&            model() const { return m_model; }
+    // Orca: mutable access to the print's local copy of the Model. Required by pylon
+    // injection scheduling so it can append CustomGCode::Item entries onto
+    // m_model.plates_custom_gcodes[curr_plate_index] without round-tripping through the
+    // source model. Callers must not mutate user-visible state — only slicer-derived
+    // bookkeeping (e.g. pylon events) should touch this.
+    Model&                  model() { return m_model; }
 
     struct TaskParams {
 		TaskParams() : single_model_object(0), single_model_instance_only(false), to_object_step(-1), to_print_step(-1) {}

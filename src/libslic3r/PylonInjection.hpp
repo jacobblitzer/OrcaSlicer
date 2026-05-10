@@ -15,6 +15,7 @@
 #include "CustomGCode.hpp"
 
 #include <string>
+#include <vector>
 
 namespace Slic3r {
 namespace PylonInjection {
@@ -49,6 +50,17 @@ Event       from_json(const std::string &j);
 //              with pylon_id == -1 on parse failure or wrong type.
 CustomGCode::Item to_item(const Event &e);
 Event             from_item(const CustomGCode::Item &item);
+
+// Batched variant for layers that fire multiple pylon events at the same print_z.
+// The existing assign_custom_gcodes pipeline consumes at most one CustomGCode::Item
+// per layer, so the scheduler groups all per-layer events into one batched Item.
+//   - to_item_batch(): all events share print_z (== events[0].z_top). extruder is
+//     taken from events[0]; the batched JSON keeps each event's own filament_id.
+//   - from_item_batch(): returns empty on parse failure or wrong type.
+CustomGCode::Item       to_item_batch(const std::vector<Event> &events);
+std::vector<Event>      from_item_batch(const CustomGCode::Item &item);
+std::string             to_json_batch(const std::vector<Event> &events);
+std::vector<Event>      from_json_batch(const std::string &j);
 
 } // namespace PylonInjection
 } // namespace Slic3r

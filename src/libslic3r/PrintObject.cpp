@@ -24,6 +24,7 @@
 #include "Format/STL.hpp"
 #include "format.hpp"
 #include "AABBTreeLines.hpp"
+#include "PylonInjection.hpp"
 
 #include <cstddef>
 #include <float.h>
@@ -832,6 +833,248 @@ void PrintObject::compute_pylon_footprints()
                             << layers_with_footprint << " / " << m_layers.size() << " layers";
 }
 
+// Orca: pylon injection — schedule the per-event list.
+//
+// Walks (pylon volume × instance) pairs. For each, computes its world AABB,
+// approximates as a vertical cylinder, checks SUPPORT_ENFORCER overlap and floor
+// safety, generates Z-spaced events using pylon_max_descent_depth as the event
+// height (step_height-aligned) and brick-bond 2-coloring stagger, snaps each event
+// to a layer print_z, computes dE from cylinder volume × filament e_per_mm3, and
+// batches all events at the same snapped print_z into a single CustomGCode::Item
+// (the existing scheduler in assign_custom_gcodes only consumes one Item per layer).
+//
+// V1 deviation from the recon: stores events on m_print->model().plates_custom_gcodes
+// (BBS multi-plate storage), not the long-deprecated Model::custom_gcode_per_print_z.
+// V1 limitation: pylon-vs-support check uses SUPPORT_ENFORCER volumes only — auto-
+// generated overhang support is flagged via warning but not geometrically tested.
+void PrintObject::schedule_pylon_injections()
+{
+    if (!this->set_started(posSchedulePylonInjection))
+        return;
+
+    // Always end with set_done(); use a small RAII to guarantee it.
+    struct StepGuard {
+        PrintObject *po;
+        ~StepGuard() { po->set_done(posSchedulePylonInjection); }
+    } guard{ this };
+
+    if (!this->has_pylons())
+        return;
+    const ModelObject *mo = this->model_object();
+    if (mo == nullptr)
+        return;
+
+    const PrintConfig &print_config = m_print->config();
+    const double max_descent = print_config.pylon_max_descent_depth.value;
+    if (max_descent <= 0.0) {
+        BOOST_LOG_TRIVIAL(warning) << "pylon-injection: pylon volumes present but pylon_max_descent_depth is 0; "
+                                   << "all injection events disabled (safe failure mode).";
+        return;
+    }
+    if (this->has_support_material()) {
+        BOOST_LOG_TRIVIAL(warning) << "pylon-injection: auto-generated support is enabled. V1 only checks "
+                                   << "SUPPORT_ENFORCER volume overlap against pylons; auto-generated support "
+                                   << "in the same XY area as a pylon is undetected. Place pylons clear of "
+                                   << "overhang regions, or use SUPPORT_BLOCKER volumes around pylons.";
+    }
+
+    // Pre-compute SUPPORT_ENFORCER world AABBs (× instances). Conservative XY-rect check.
+    std::vector<BoundingBoxf3> enforcer_world_bboxes;
+    for (const ModelVolume *mv : mo->volumes) {
+        if (mv == nullptr || !mv->is_support_enforcer())
+            continue;
+        const BoundingBoxf3 lb = mv->mesh().bounding_box();
+        for (const ModelInstance *mi : mo->instances) {
+            if (mi == nullptr)
+                continue;
+            const Transform3d trafo = mi->get_matrix() * mv->get_matrix();
+            enforcer_world_bboxes.push_back(lb.transformed(trafo));
+        }
+    }
+
+    // Resolve global pylon filament. V1 fallback: filament 0 if unset.
+    const int filament_one_based = print_config.pylon_injection_filament.value;
+    const int filament_id = (filament_one_based > 0) ? (filament_one_based - 1) : 0;
+
+    // Volume → filament length math. Mirrors Extruder::e_per_mm3 (Extruder.cpp:9-19).
+    const double filament_diameter =
+        (filament_id < (int)print_config.filament_diameter.values.size())
+            ? print_config.filament_diameter.values[filament_id]
+            : 1.75;
+    const double filament_flow_ratio =
+        (filament_id < (int)print_config.filament_flow_ratio.values.size())
+            ? print_config.filament_flow_ratio.values[filament_id]
+            : 1.0;
+    const double filament_cross_section = M_PI * (filament_diameter * 0.5) * (filament_diameter * 0.5);
+    const double e_per_mm3 = (filament_cross_section > 0.0)
+        ? (filament_flow_ratio / filament_cross_section)
+        : 0.0;
+    if (e_per_mm3 <= 0.0) {
+        BOOST_LOG_TRIVIAL(warning) << "pylon-injection: cannot compute e_per_mm3 for filament " << filament_id
+                                   << " (diameter=" << filament_diameter << "). Aborting schedule.";
+        return;
+    }
+
+    // Group events by snapped layer index so we can batch them into one Item per layer.
+    std::map<size_t, std::vector<PylonInjection::Event>> events_by_layer;
+
+    int    next_pylon_id        = 0;
+    size_t pylon_index_for_stagger = 0;
+    int    skipped_floor        = 0;
+    int    skipped_support      = 0;
+
+    for (const ModelVolume *mv : mo->volumes) {
+        if (mv == nullptr || !mv->is_pylon())
+            continue;
+
+        // Per-pylon settings — read from the ModelVolume's config, fall back to defaults if unset.
+        auto opt_int   = [&](const char *key, int def) {
+            const ConfigOption *o = mv->config.option(key);
+            return o ? static_cast<const ConfigOptionInt*>(o)->value : def;
+        };
+        auto opt_float = [&](const char *key, double def) {
+            const ConfigOption *o = mv->config.option(key);
+            return o ? static_cast<const ConfigOptionFloat*>(o)->value : def;
+        };
+        const int    period        = std::max(1, opt_int  ("pylon_injection_period",    20));
+        const int    dwell_ms      = std::max(0, opt_int  ("pylon_injection_dwell_ms", 2000));
+        const double descent_speed = std::max(1.0, opt_float("pylon_descent_speed",    300.0));
+        const double extrude_speed = std::max(1.0, opt_float("pylon_extrude_speed",     60.0));
+        const double step_height   = std::max(0.05, opt_float("pylon_step_height",       0.4));
+
+        // step-aligned event height: largest multiple of step_height not exceeding max_descent.
+        const double event_height = std::floor(max_descent / step_height) * step_height;
+        if (event_height < step_height) {
+            BOOST_LOG_TRIVIAL(warning) << "pylon-injection: event_height < step_height (max_descent=" << max_descent
+                                       << ", step_height=" << step_height << "); skipping pylon.";
+            continue;
+        }
+
+        const BoundingBoxf3 local_bbox = mv->mesh().bounding_box();
+
+        for (const ModelInstance *mi : mo->instances) {
+            if (mi == nullptr)
+                continue;
+
+            const Transform3d trafo = mi->get_matrix() * mv->get_matrix();
+            const BoundingBoxf3 wb = local_bbox.transformed(trafo);
+
+            const double cx     = 0.5 * (wb.min.x() + wb.max.x());
+            const double cy     = 0.5 * (wb.min.y() + wb.max.y());
+            const double radius = 0.5 * std::max(wb.size().x(), wb.size().y());
+            const double pz_bot = wb.min.z();
+            const double pz_top = wb.max.z();
+            if (radius <= 0.0 || pz_top <= pz_bot)
+                continue;
+
+            // SUPPORT_ENFORCER overlap (XY rect + Z range).
+            bool blocked_by_enforcer = false;
+            for (const BoundingBoxf3 &eb : enforcer_world_bboxes) {
+                if (eb.max.x() <= wb.min.x() || eb.min.x() >= wb.max.x()) continue;
+                if (eb.max.y() <= wb.min.y() || eb.min.y() >= wb.max.y()) continue;
+                if (eb.max.z() <= pz_bot      || eb.min.z() >= pz_top)    continue;
+                blocked_by_enforcer = true;
+                break;
+            }
+            if (blocked_by_enforcer) {
+                BOOST_LOG_TRIVIAL(warning) << "pylon-injection: pylon at (" << cx << ", " << cy
+                                           << ") overlaps a SUPPORT_ENFORCER volume — disabled.";
+                ++skipped_support;
+                continue;
+            }
+
+            // Floor safety: at least one printed layer must exist strictly below pz_bot.
+            size_t first_layer_at_or_above_pz_bot = m_layers.size();
+            for (size_t li = 0; li < m_layers.size(); ++li) {
+                if (m_layers[li] != nullptr && m_layers[li]->print_z >= pz_bot) {
+                    first_layer_at_or_above_pz_bot = li;
+                    break;
+                }
+            }
+            if (first_layer_at_or_above_pz_bot == 0 || first_layer_at_or_above_pz_bot >= m_layers.size()) {
+                BOOST_LOG_TRIVIAL(warning) << "pylon-injection: pylon at (" << cx << ", " << cy
+                                           << ") has no printed layer below z_bottom=" << pz_bot
+                                           << " — disabled (no floor).";
+                ++skipped_floor;
+                continue;
+            }
+
+            // Brick-bond 2-coloring stagger: odd-indexed pylons offset by half event height.
+            const double stagger_z = (pylon_index_for_stagger % 2 == 0) ? 0.0 : (event_height * 0.5);
+
+            // Generate event Z targets: pz_bot + event_height + N*event_height + stagger.
+            // After snap to layer print_z, enforce per-pylon `period` layer gap.
+            size_t last_emitted_layer = m_layers.size();  // sentinel
+            for (double target_top = pz_bot + event_height + stagger_z;
+                 target_top <= pz_top + 1e-6;
+                 target_top += event_height)
+            {
+                size_t snap_idx = first_layer_at_or_above_pz_bot;
+                while (snap_idx < m_layers.size() &&
+                       (m_layers[snap_idx] == nullptr || m_layers[snap_idx]->print_z < target_top))
+                    ++snap_idx;
+                if (snap_idx >= m_layers.size())
+                    break;
+
+                // Period rate-limit: enforce minimum layer gap between successive events for this pylon.
+                if (last_emitted_layer != m_layers.size() &&
+                    snap_idx - last_emitted_layer < (size_t)period)
+                    continue;
+
+                const Layer *L = m_layers[snap_idx];
+                const double z_top_snapped = L->print_z;
+                const double z_bot         = std::max(pz_bot, z_top_snapped - event_height);
+                if (z_top_snapped <= z_bot)
+                    continue;
+
+                PylonInjection::Event ev;
+                ev.pylon_id      = next_pylon_id;
+                ev.x             = cx;
+                ev.y             = cy;
+                ev.z_bottom      = z_bot;
+                ev.z_top         = z_top_snapped;
+                ev.radius        = radius;
+                ev.filament_id   = filament_id;
+                ev.dwell_ms      = dwell_ms;
+                ev.descent_speed = descent_speed;
+                ev.extrude_speed = extrude_speed;
+                ev.step_height   = step_height;
+                ev.dE            = (M_PI * radius * radius * (z_top_snapped - z_bot)) * e_per_mm3;
+
+                events_by_layer[snap_idx].push_back(std::move(ev));
+                last_emitted_layer = snap_idx;
+            }
+
+            ++next_pylon_id;
+            ++pylon_index_for_stagger;
+        }
+    }
+
+    // Splice batched Items into the print's plate-local custom-gcode list.
+    auto &plates_map = m_print->model().plates_custom_gcodes;
+    const int plate_index = m_print->model().curr_plate_index;
+    CustomGCode::Info &info = plates_map[plate_index];
+
+    // Remove any previously-scheduled PylonInject items (idempotency across re-slicing).
+    info.gcodes.erase(
+        std::remove_if(info.gcodes.begin(), info.gcodes.end(),
+                       [](const CustomGCode::Item &it) { return it.type == CustomGCode::PylonInject; }),
+        info.gcodes.end());
+
+    int total_events = 0;
+    for (auto &kv : events_by_layer) {
+        info.gcodes.push_back(PylonInjection::to_item_batch(kv.second));
+        total_events += int(kv.second.size());
+    }
+    std::sort(info.gcodes.begin(), info.gcodes.end());
+
+    BOOST_LOG_TRIVIAL(info) << "pylon-injection: scheduled " << total_events << " event(s) across "
+                            << events_by_layer.size() << " layer(s) for " << next_pylon_id
+                            << " pylon instance(s); skipped " << skipped_support
+                            << " for SUPPORT_ENFORCER overlap, " << skipped_floor
+                            << " for floor safety.";
+}
+
 void PrintObject::contour_z()
 {
     if (!this->set_started(posContouring)) {
@@ -1541,15 +1784,15 @@ bool PrintObject::invalidate_step(PrintObjectStep step)
 
     // propagate to dependent steps
     if (step == posPerimeters) {
-		invalidated |= this->invalidate_steps({ posPrepareInfill, posInfill, posIroning, posContouring, posSimplifyPath, posSimplifyInfill });
+		invalidated |= this->invalidate_steps({ posPrepareInfill, posInfill, posIroning, posContouring, posSchedulePylonInjection, posSimplifyPath, posSimplifyInfill });
         invalidated |= m_print->invalidate_steps({ psSkirtBrim });
     } else if (step == posPrepareInfill) {
-        invalidated |= this->invalidate_steps({ posInfill, posIroning, posContouring, posSimplifyPath, posSimplifyInfill });
+        invalidated |= this->invalidate_steps({ posInfill, posIroning, posContouring, posSchedulePylonInjection, posSimplifyPath, posSimplifyInfill });
     } else if (step == posInfill) {
-        invalidated |= this->invalidate_steps({ posIroning, posContouring, posSimplifyInfill });
+        invalidated |= this->invalidate_steps({ posIroning, posContouring, posSchedulePylonInjection, posSimplifyInfill });
         invalidated |= m_print->invalidate_steps({ psSkirtBrim });
     } else if (step == posSlice) {
-		invalidated |= this->invalidate_steps({ posPerimeters, posPrepareInfill, posInfill, posIroning, posContouring, posSupportMaterial, posSimplifyPath, posSimplifyInfill });
+		invalidated |= this->invalidate_steps({ posPerimeters, posPrepareInfill, posInfill, posIroning, posContouring, posSchedulePylonInjection, posSupportMaterial, posSimplifyPath, posSimplifyInfill });
         invalidated |= m_print->invalidate_steps({ psSkirtBrim });
         m_slicing_params.valid = false;
     } else if (step == posSupportMaterial) {

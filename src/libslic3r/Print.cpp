@@ -2285,6 +2285,17 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
             }
         }
 
+        // Orca: pylon injection — must run after infill (footprints cache populated)
+        // and before support material so pylons can be informed by surrounding geometry.
+        for (PrintObject *obj : m_objects) {
+            if (need_slicing_objects.count(obj) != 0) {
+                obj->schedule_pylon_injections();
+            } else {
+                if (obj->set_started(posSchedulePylonInjection))
+                    obj->set_done(posSchedulePylonInjection);
+            }
+        }
+
         tbb::parallel_for(tbb::blocked_range<int>(0, int(m_objects.size())),
             [this, need_slicing_objects](const tbb::blocked_range<int>& range) {
                 for (int i = range.begin(); i < range.end(); i++) {
@@ -2325,6 +2336,8 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
                     obj->set_done(posIroning);
                 if (obj->set_started(posContouring))
                     obj->set_done(posContouring);
+                if (obj->set_started(posSchedulePylonInjection))
+                    obj->set_done(posSchedulePylonInjection);
                 if (obj->set_started(posSupportMaterial))
                     obj->set_done(posSupportMaterial);
                 if (obj->set_started(posDetectOverhangsForLift))
@@ -2334,6 +2347,7 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
                 obj->make_perimeters();
                 obj->infill();
                 obj->ironing();
+                obj->schedule_pylon_injections();
                 obj->generate_support_material();
                 obj->detect_overhangs_for_lift();
                 obj->estimate_curled_extrusions();
