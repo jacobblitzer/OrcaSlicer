@@ -1223,6 +1223,15 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool, zaa_dont_alternate_fill_direction))
     ((ConfigOptionFloat, zaa_min_z))
     ((ConfigOptionFloat, zaa_minimize_perimeter_height))
+
+    // Orca: Pylon Injection (per-region overridable; placed on the pylon ModelVolume's config)
+    ((ConfigOptionBool,  pylon_enabled))
+    ((ConfigOptionInt,   pylon_injection_period))
+    ((ConfigOptionInt,   pylon_stagger_offset))
+    ((ConfigOptionInt,   pylon_injection_dwell_ms))
+    ((ConfigOptionFloat, pylon_descent_speed))
+    ((ConfigOptionFloat, pylon_extrude_speed))
+    ((ConfigOptionFloat, pylon_step_height))
     )
 
 PRINT_CONFIG_CLASS_DEFINE(
@@ -1615,6 +1624,9 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionPoint,               bed_mesh_probe_distance))
     ((ConfigOptionFloat,               adaptive_bed_mesh_margin))
 
+    // Orca: Pylon Injection (global / per-print)
+    ((ConfigOptionInt,                 pylon_injection_filament))
+    ((ConfigOptionFloat,               pylon_max_descent_depth))
 
 )
 
