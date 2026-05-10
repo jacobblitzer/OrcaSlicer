@@ -431,6 +431,11 @@ public:
     bool                        has_support_material()  const { return this->has_support() || this->has_raft(); }
     // Orca: does this object contain any user-marked pylon volumes?
     bool                        has_pylons() const;
+    // Orca: per-layer cylinder footprints of all pylon volumes (× instances),
+    // pre-intersected with Layer::lslices so they are guaranteed to be
+    // inside the model at each Z. Built in compute_pylon_footprints();
+    // empty until then. Indexed by layer id.
+    const ExPolygons&           pylon_footprints_at_layer(size_t layer_id) const;
     // Checks if the model object is painted using the multi-material painting gizmo.
     bool                        is_mm_painted()         const { return this->model_object()->is_mm_painted(); }
     // Checks if the model object is painted using the fuzzy skin painting gizmo.
@@ -500,6 +505,8 @@ private:
     void ironing();
     bool need_z_contouring() const;
     void contour_z();
+    // Orca: pylon injection — populate m_pylon_footprints_per_layer before make_fills.
+    void compute_pylon_footprints();
     void generate_support_material();
     void estimate_curled_extrusions();
     void simplify_extrusion_path();
@@ -568,6 +575,11 @@ private:
 
     std::pair<FillAdaptive::OctreePtr, FillAdaptive::OctreePtr> m_adaptive_fill_octrees;
     FillLightning::GeneratorPtr m_lightning_generator;
+
+    // Orca: pylon injection — per-layer footprints (XY) of all pylon volumes × instances,
+    // pre-intersected with Layer::lslices at that Z so they're guaranteed to be inside the model.
+    // Indexed by layer id. Empty until compute_pylon_footprints() is called.
+    std::vector<ExPolygons>     m_pylon_footprints_per_layer;
 
     std::vector < VolumeSlices >            firstLayerObjSliceByVolume;
     std::vector<groupedVolumeSlices>        firstLayerObjSliceByGroups;

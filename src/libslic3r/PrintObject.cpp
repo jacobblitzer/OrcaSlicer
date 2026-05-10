@@ -677,6 +677,10 @@ void PrintObject::infill()
         const auto& adaptive_fill_octree = this->m_adaptive_fill_octrees.first;
         const auto& support_fill_octree = this->m_adaptive_fill_octrees.second;
 
+        // Orca: pylon injection — compute per-layer void footprints so make_fills
+        // can subtract them from sparse infill regions (Task 4 / Hook B).
+        this->compute_pylon_footprints();
+
         BOOST_LOG_TRIVIAL(debug) << "Filling layers in parallel - start";
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, m_layers.size()),
@@ -737,6 +741,95 @@ bool PrintObject::has_pylons() const
         if (mv != nullptr && mv->is_pylon())
             return true;
     return false;
+}
+
+// Orca: pylon injection — accessor for per-layer footprint cache.
+const ExPolygons& PrintObject::pylon_footprints_at_layer(size_t layer_id) const
+{
+    static const ExPolygons empty;
+    if (layer_id >= m_pylon_footprints_per_layer.size())
+        return empty;
+    return m_pylon_footprints_per_layer[layer_id];
+}
+
+// Orca: pylon injection — populate m_pylon_footprints_per_layer.
+// Approach: for each (pylon ModelVolume × ModelInstance) pair, approximate the
+// volume's transformed AABB as a vertical cylinder (radius = max(world bbox dx, dy) / 2,
+// center XY = world bbox center XY, Z extent = [world bbox min.z, max.z]).
+// Build a 32-segment polygon for the XY circle and intersect with Layer::lslices for
+// every layer whose print_z falls inside the Z extent. The intersection is the
+// per-layer footprint inside which we will (in later steps) subtract sparse infill
+// and emit injection events.
+void PrintObject::compute_pylon_footprints()
+{
+    m_pylon_footprints_per_layer.clear();
+    if (!this->has_pylons())
+        return;
+
+    m_pylon_footprints_per_layer.resize(m_layers.size());
+
+    const ModelObject *mo = this->model_object();
+    if (mo == nullptr)
+        return;
+
+    size_t pylon_volume_count    = 0;
+    size_t pylon_instance_count  = 0;
+    size_t footprint_stamps      = 0;
+
+    for (const ModelVolume *mv : mo->volumes) {
+        if (mv == nullptr || !mv->is_pylon())
+            continue;
+        ++pylon_volume_count;
+
+        const BoundingBoxf3 local_bbox = mv->mesh().bounding_box();
+
+        for (const ModelInstance *mi : mo->instances) {
+            if (mi == nullptr)
+                continue;
+            ++pylon_instance_count;
+
+            const Transform3d trafo = mi->get_matrix() * mv->get_matrix();
+            const BoundingBoxf3 world_bbox = local_bbox.transformed(trafo);
+
+            const double cx    = 0.5 * (world_bbox.min.x() + world_bbox.max.x());
+            const double cy    = 0.5 * (world_bbox.min.y() + world_bbox.max.y());
+            const double radius = 0.5 * std::max(world_bbox.size().x(), world_bbox.size().y());
+            const double z_min = world_bbox.min.z();
+            const double z_max = world_bbox.max.z();
+
+            if (radius <= 0.0 || z_max <= z_min)
+                continue;
+
+            Polygon circle = make_circle_num_segments(scale_(radius), 32);
+            circle.translate(scale_(cx), scale_(cy));
+            const ExPolygon pylon_xy(circle);
+
+            for (size_t li = 0; li < m_layers.size(); ++li) {
+                const Layer *layer = m_layers[li];
+                if (layer == nullptr)
+                    continue;
+                if (layer->print_z < z_min || layer->print_z > z_max)
+                    continue;
+
+                ExPolygons clipped = intersection_ex(pylon_xy, layer->lslices);
+                if (clipped.empty())
+                    continue;
+                append(m_pylon_footprints_per_layer[li], std::move(clipped));
+                ++footprint_stamps;
+            }
+        }
+    }
+
+    size_t layers_with_footprint = 0;
+    for (const ExPolygons &f : m_pylon_footprints_per_layer)
+        if (!f.empty())
+            ++layers_with_footprint;
+
+    BOOST_LOG_TRIVIAL(info) << "pylon-injection: " << pylon_volume_count
+                            << " volume(s) × " << (pylon_instance_count / std::max<size_t>(pylon_volume_count, 1))
+                            << " instance(s); " << footprint_stamps
+                            << " per-layer footprint stamps over "
+                            << layers_with_footprint << " / " << m_layers.size() << " layers";
 }
 
 void PrintObject::contour_z()
