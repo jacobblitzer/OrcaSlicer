@@ -1,226 +1,245 @@
-#include "ContourZ.hpp"
+#include "Exception.hpp"
 #include "ExtrusionEntity.hpp"
 #include "ExtrusionEntityCollection.hpp"
+#include "Layer.hpp"
+#include "Point.hpp"
+#include "Print.hpp"
 #include "SLA/IndexedMesh.hpp"
 #include "libslic3r.h"
-
+#include <cfloat>
 #include <cmath>
+#include <initializer_list>
+#include <string>
 
 namespace Slic3r {
 
-// Subdivision step size in mm for sampling points along extrusion paths.
-static constexpr double SUBDIVISION_STEP_MM = 0.1;
+static void contour_extrusion_entity(LayerRegion *region, const sla::IndexedMesh &mesh, ExtrusionEntity *extr);
 
-// Cast rays up and down from a point to find the nearest mesh surface Z.
-// Returns the Z coordinate of the nearest surface hit, or NaN if no hit.
-static float ray_cast_surface_z(const sla::IndexedMesh &mesh, double x, double y, double z)
+static double follow_slope_down(double angle_rad, double dist)
 {
-    Vec3d origin(x, y, z);
-    Vec3d dir_up(0, 0, 1);
-    Vec3d dir_down(0, 0, -1);
-
-    auto hit_up   = mesh.query_ray_hit(origin, dir_up);
-    auto hit_down = mesh.query_ray_hit(origin, dir_down);
-
-    bool up_valid   = hit_up.is_hit();
-    bool down_valid = hit_down.is_hit();
-
-    if (up_valid && down_valid) {
-        // Return the closer surface
-        if (hit_up.distance() <= hit_down.distance())
-            return float(z + hit_up.distance());
-        else
-            return float(z - hit_down.distance());
-    } else if (up_valid) {
-        return float(z + hit_up.distance());
-    } else if (down_valid) {
-        return float(z - hit_down.distance());
-    }
-
-    return std::numeric_limits<float>::quiet_NaN();
+	return -dist * std::sin(angle_rad);
 }
 
-// For external perimeters, compute a slope-based reduction factor.
-// Surfaces steeper than the threshold angle get their Z adjustment reduced.
-// Returns a factor in [0, 1] where 1 means full adjustment, 0 means no adjustment.
-static float perimeter_slope_factor(
-    const sla::IndexedMesh &mesh, double x, double y, double z,
-    float threshold_deg)
+static double slope_from_normal(const Eigen::Vector3d& normal)
 {
-    if (threshold_deg <= 0.f)
-        return 0.f;
-    if (threshold_deg >= 90.f)
-        return 1.f;
+    // Ensure the normal is normalized
+    Eigen::Vector3d n = normal.normalized();
 
-    Vec3d origin(x, y, z);
-    Vec3d dir_up(0, 0, 1);
-    Vec3d dir_down(0, 0, -1);
-
-    auto hit_up   = mesh.query_ray_hit(origin, dir_up);
-    auto hit_down = mesh.query_ray_hit(origin, dir_down);
-
-    // Pick the closer hit
-    sla::IndexedMesh::hit_result hit(sla::IndexedMesh::hit_result::infty());
-    if (hit_up.is_hit() && hit_down.is_hit())
-        hit = (hit_up.distance() <= hit_down.distance()) ? hit_up : hit_down;
-    else if (hit_up.is_hit())
-        hit = hit_up;
-    else if (hit_down.is_hit())
-        hit = hit_down;
-    else
-        return 0.f;
-
-    // Get the surface normal at the hit point
-    Vec3d normal = hit.normal();
-    // Compute angle between normal and vertical (Z axis)
-    double cos_angle = std::abs(normal.z()) / normal.norm();
-    double angle_deg = std::acos(std::clamp(cos_angle, 0.0, 1.0)) * 180.0 / M_PI;
-
-    // angle_deg is the angle from vertical:
-    //   0 deg = flat horizontal surface (normal points up) -> full adjustment
-    //  90 deg = vertical wall (normal points sideways) -> no adjustment
-    // We want to reduce adjustment when the surface is steeper than threshold.
-    if (angle_deg <= threshold_deg)
-        return 1.f;
-    // Smooth falloff from threshold to 90 degrees
-    float t = float((angle_deg - threshold_deg) / (90.0 - threshold_deg));
-    return std::max(0.f, 1.f - t);
+    // Compute angle between normal and z-axis
+    double angle_rad = std::acos(std::abs(n.z()));  // angle between normal and vertical
+	return angle_rad;
 }
 
-// Subdivide a polyline segment into steps of approximately SUBDIVISION_STEP_MM.
-// Returns a list of points (in mm, unscaled) including start and end.
-static std::vector<Vec3d> subdivide_segment(const Vec3d &a, const Vec3d &b)
+static bool contour_extrusion_path(LayerRegion *region, const sla::IndexedMesh &mesh, ExtrusionPath &path)
 {
-    double len = (b - a).head<2>().norm(); // 2D distance in XY
-    int n_steps = std::max(1, int(std::ceil(len / SUBDIVISION_STEP_MM)));
-    std::vector<Vec3d> pts;
-    pts.reserve(n_steps + 1);
-    for (int i = 0; i <= n_steps; ++i) {
-        double t = double(i) / double(n_steps);
-        pts.push_back(a + t * (b - a));
-    }
-    return pts;
-}
+    if (path.role() != erTopSolidInfill && path.role() != erIroning && path.role() != erExternalPerimeter && path.role() != erPerimeter) {
+		return false;
+	}
+	
+	Layer *layer = region->layer();
+	coordf_t mesh_slice_z = layer->slice_z + mesh.ground_level();
+	coordf_t min_z = region->region().config().zaa_min_z;
 
-// Process a single ExtrusionPath, applying Z contouring.
-static void contour_z_path(
-    ExtrusionPath           &path,
-    const sla::IndexedMesh  &mesh,
-    float                    layer_print_z,
-    float                    layer_bottom_z,
-    float                    min_z,
-    float                    perimeter_slope_threshold_deg)
-{
-    // Only process eligible extrusion roles
-    ExtrusionRole role = path.role();
-    if (role != erTopSolidInfill &&
-        role != erIroning &&
-        role != erExternalPerimeter &&
-        role != erPerimeter)
-        return;
+	const Points3 &points = path.polyline.points;
+	double resolution_mm = 0.1;
 
-    const Polyline &poly = path.polyline;
-    if (poly.points.size() < 2)
-        return;
+	coordf_t height = layer->height;
 
-    bool is_perimeter = (role == erExternalPerimeter || role == erPerimeter);
-    float floor_z = layer_bottom_z + min_z;
+	double minimize_perimeter_height_angle = region->region().config().zaa_minimize_perimeter_height;
 
-    Points3 contour_pts;
-    contour_pts.reserve(poly.points.size() * 2); // rough estimate after subdivision
+	Pointf3s contoured_points;
+	bool was_contoured = false;
 
-    // Process each segment of the polyline
-    for (size_t i = 0; i + 1 < poly.points.size(); ++i) {
-        const Point &p0 = poly.points[i];
-        const Point &p1 = poly.points[i + 1];
-
-        // Convert to unscaled mm coordinates
-        double x0 = unscale<double>(p0.x());
-        double y0 = unscale<double>(p0.y());
-        double x1 = unscale<double>(p1.x());
-        double y1 = unscale<double>(p1.y());
-
-        // Subdivide this segment
-        Vec3d a(x0, y0, layer_print_z);
-        Vec3d b(x1, y1, layer_print_z);
-        auto sub_pts = subdivide_segment(a, b);
-
-        // For the first segment, include the first point; otherwise skip it
-        // (it was the last point of the previous segment).
-        size_t start_idx = (i == 0) ? 0 : 1;
-        for (size_t j = start_idx; j < sub_pts.size(); ++j) {
-            const Vec3d &pt = sub_pts[j];
-
-            // Ray-cast to find nearest surface Z
-            float surface_z = ray_cast_surface_z(mesh, pt.x(), pt.y(), layer_print_z);
-
-            float contour_z = layer_print_z;
-            if (!std::isnan(surface_z)) {
-                // Compute the offset: we want to follow the surface down (never up)
-                float z_offset = surface_z - layer_print_z;
-                if (z_offset > 0.f)
-                    z_offset = 0.f; // Never raise Z above layer_print_z
-
-                if (is_perimeter) {
-                    // Apply slope-based reduction for perimeters
-                    float factor = perimeter_slope_factor(mesh, pt.x(), pt.y(),
-                        layer_print_z, perimeter_slope_threshold_deg);
-                    z_offset *= factor;
-                }
-
-                contour_z = layer_print_z + z_offset;
-            }
-
-            // Clamp Z to valid range
-            contour_z = std::max(floor_z, std::min(contour_z, layer_print_z));
-
-            // Store as scaled coordinates
-            contour_pts.emplace_back(
-                coord_t(scale_(pt.x())),
-                coord_t(scale_(pt.y())),
-                coord_t(scale_(contour_z))
-            );
-        }
+    if (points.size() < 2) {
+        // Safety check. The loop below does not handle paths with less than two points correctly.
+        return false;
     }
 
-    // Only mark as contoured if we actually produced contour points
-    if (!contour_pts.empty()) {
-        path.z_contoured = true;
-        path.contour_polyline.points = std::move(contour_pts);
-    }
-}
+    for (Points3::const_iterator it = points.begin(); it != points.end()-1; ++it) {
+		Vec2d p1d(unscale_(it->x()), unscale_(it->y()));
+		Vec2d p2d(unscale_((it+1)->x()), unscale_((it+1)->y()));
+		Linef line(p1d, p2d);
 
-// Recursively process an ExtrusionEntityCollection.
-void contour_z_entity_collection(
-    ExtrusionEntityCollection &collection,
-    const sla::IndexedMesh    &mesh,
-    float                      layer_print_z,
-    float                      layer_bottom_z,
-    float                      min_z,
-    float                      perimeter_slope_threshold_deg)
-{
-    for (ExtrusionEntity *entity : collection.entities) {
-        if (auto *path = dynamic_cast<ExtrusionPathSloped *>(entity)) {
-            // Skip sloped paths (scarf joints already handle Z)
+		double length_mm = line.length();
+		int num_segments = int(std::ceil(length_mm / resolution_mm));
+		Vec2d delta = line.vector();
+
+        if (num_segments == 0) {
             continue;
-        } else if (auto *path = dynamic_cast<ExtrusionPath *>(entity)) {
-            contour_z_path(*path, mesh, layer_print_z, layer_bottom_z,
-                min_z, perimeter_slope_threshold_deg);
-        } else if (auto *multipath = dynamic_cast<ExtrusionMultiPath *>(entity)) {
-            for (ExtrusionPath &p : multipath->paths) {
-                contour_z_path(p, mesh, layer_print_z, layer_bottom_z,
-                    min_z, perimeter_slope_threshold_deg);
-            }
-        } else if (auto *loop = dynamic_cast<ExtrusionLoop *>(entity)) {
-            for (ExtrusionPath &p : loop->paths) {
-                contour_z_path(p, mesh, layer_print_z, layer_bottom_z,
-                    min_z, perimeter_slope_threshold_deg);
-            }
-        } else if (auto *coll = dynamic_cast<ExtrusionEntityCollection *>(entity)) {
-            contour_z_entity_collection(*coll, mesh, layer_print_z, layer_bottom_z,
-                min_z, perimeter_slope_threshold_deg);
         }
+
+        for (int i = 0; i < num_segments + 1; i++) {
+            Vec2d p = p1d + delta * i / num_segments;
+
+            coordf_t x = p.x();
+			coordf_t y = p.y();
+
+			sla::IndexedMesh::hit_result hit_up = mesh.query_ray_hit({x, y, mesh_slice_z}, {0.0, 0.0, 1.0});
+
+			double d = hit_up.distance() - (layer->print_z - layer->slice_z);
+
+			double max_up = min_z;
+			double min_down = -(height - min_z);
+			double half_width = path.width / 2.0;
+			if (path.role() == erIroning) {
+				max_up = height;
+				min_down = -(height + 0.1);
+			}
+
+            if (is_perimeter(path.role()) && hit_up.is_hit()) {
+				const Vec3d &normal = hit_up.normal();
+                double slope_rad     = slope_from_normal(normal);
+                double slope_degrees = slope_rad * 180.0 / M_PI;
+
+                if (d > min_down && minimize_perimeter_height_angle > 0 && minimize_perimeter_height_angle < slope_degrees) {
+                    double adjustment = follow_slope_down(slope_rad, half_width);
+                    if (adjustment > 0) {
+                        throw RuntimeError("ContourZ: got positive adjustment");
+                    }
+                    d += adjustment;
+                    if (d < min_down) {
+                        d = min_down;
+                    }
+                }
+            }
+
+            if (d < -height || d > max_up + 0.03) {
+                // this point is too far from the mesh edge, probably because this is not a top surface. Do not contour it.
+                d = 0;
+            }
+
+            if (d < min_down) {
+                d = min_down;
+            } else if (d > max_up) {
+                d = max_up;
+            }
+
+            if (is_perimeter(path.role()) && d > 0) {
+                // do not increase height of perimeters as this may create an appearance of a seam
+                d = 0;
+            }
+
+            if (std::abs(d) > EPSILON) {
+				was_contoured = true;
+			}
+
+            Vec3d new_point = {p.x(), p.y(), d};
+
+            if (contoured_points.size() >= 2 && i != 0) {
+                // Normally, if the new point is collinear with the last two points, we do not add
+                // it to the list of contoured points. Instead we update the last point to be the
+                // new point. This is to avoid creating a large number of very short segments.
+                //
+                // However, if the new point corresponds to a point in the original path (i == 0),
+                // even if it is collinear, we add it anyway. This is to avoid creating a degenerate
+                // polygon with only two points, which may cause issues in downstream code.
+                double dist = Linef3::distance_to_infinite_squared(new_point, contoured_points[contoured_points.size() - 2],
+                                                                   contoured_points[contoured_points.size() - 1]);
+                if (dist < EPSILON * EPSILON) {
+                    contoured_points[contoured_points.size() - 1] = new_point;
+                    continue;
+                }
+            }
+
+            contoured_points.push_back(new_point);
+        }
+    }
+
+    if (!was_contoured) {
+		return false;
+	}
+
+	Polyline3 polyline;
+	for (const Vec3d &point : contoured_points) {
+		polyline.append(Point3(scale_(point.x()), scale_(point.y()), scale_(point.z())));
+	}
+
+	path.polyline = std::move(polyline);
+	path.z_contoured = true;
+	return true;
+}
+
+static void contour_extrusion_multipath(LayerRegion *region, const sla::IndexedMesh &mesh, ExtrusionMultiPath &multipath) 
+{
+	for (ExtrusionPath &path : multipath.paths) {
+		contour_extrusion_path(region, mesh, path);
+	}
+}
+
+static void contour_extrusion_loop(LayerRegion *region, const sla::IndexedMesh &mesh, ExtrusionLoop &loop) 
+{
+	for (ExtrusionPath &path : loop.paths) {
+		contour_extrusion_path(region, mesh, path);
+	}
+}
+
+static void contour_extrusion_entitiy_collection(LayerRegion *region, const sla::IndexedMesh &mesh, ExtrusionEntityCollection &collection)
+{
+	for (ExtrusionEntity *entity : collection.entities) {
+		contour_extrusion_entity(region, mesh, entity);
+	}
+}
+
+static void contour_extrusion_entity(LayerRegion *region, const sla::IndexedMesh &mesh, ExtrusionEntity *extr)
+{
+	const ExtrusionPathSloped *sloped = dynamic_cast<const ExtrusionPathSloped*>(extr);
+	if (sloped != nullptr) {
+		throw RuntimeError("ExtrusionPathSloped not implemented");
+		return;
+	}
+
+	ExtrusionMultiPath *multipath = dynamic_cast<ExtrusionMultiPath*>(extr);
+	if (multipath != nullptr) {
+		contour_extrusion_multipath(region, mesh, *multipath);
+		return;
+	}
+
+	ExtrusionPath *path = dynamic_cast<ExtrusionPath*>(extr);
+	if (path != nullptr) {
+		contour_extrusion_path(region, mesh, *path);
+		return;
+	}
+
+	ExtrusionLoop *loop = dynamic_cast<ExtrusionLoop*>(extr);
+	if (loop != nullptr) {
+		contour_extrusion_loop(region, mesh, *loop);
+		return;
+	}
+
+	const ExtrusionLoopSloped *loop_sloped = dynamic_cast<const ExtrusionLoopSloped*>(extr);
+	if (loop_sloped != nullptr) {
+		throw RuntimeError("ExtrusionLoopSloped not implemented");
+		return;
+	}
+
+	ExtrusionEntityCollection *collection = dynamic_cast<ExtrusionEntityCollection*>(extr);
+	if (collection != nullptr) {
+		contour_extrusion_entitiy_collection(region, mesh, *collection);
+		return;
+	}
+
+	throw RuntimeError("ContourZ: ExtrusionEntity type not implemented: " + std::string(typeid(*extr).name()));
+	return;
+}
+
+static void handle_extrusion_collection(LayerRegion *region, const sla::IndexedMesh &mesh, ExtrusionEntityCollection &collection, std::initializer_list<ExtrusionRole> roles) {
+    for (ExtrusionEntity* extr : collection.entities) {
+        if (!contains(roles, extr->role())) {
+			continue;
+		}
+
+		contour_extrusion_entity(region, mesh, extr);
     }
 }
 
+void Layer::make_contour_z(const sla::IndexedMesh &mesh)
+{
+	for (LayerRegion *region : this->regions()) {
+        if (!region->region().config().zaa_enabled)
+            continue;
+
+        handle_extrusion_collection(region, mesh, region->fills, {erTopSolidInfill, erIroning, erPerimeter, erExternalPerimeter, erMixed});
+        handle_extrusion_collection(region, mesh, region->perimeters, {erPerimeter, erExternalPerimeter, erMixed});
+    }
+}
 } // namespace Slic3r
