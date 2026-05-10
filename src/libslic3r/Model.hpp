@@ -902,6 +902,12 @@ public:
 	bool                is_support_enforcer()   const { return m_type == ModelVolumeType::SUPPORT_ENFORCER; }
 	bool                is_support_blocker()    const { return m_type == ModelVolumeType::SUPPORT_BLOCKER; }
 	bool                is_support_modifier()   const { return m_type == ModelVolumeType::SUPPORT_BLOCKER || m_type == ModelVolumeType::SUPPORT_ENFORCER; }
+    // Orca: a pylon is a negative volume that has been opted in to bottom-up injection by the user.
+    bool                is_pylon()              const {
+        if (m_type != ModelVolumeType::NEGATIVE_VOLUME) return false;
+        const ConfigOption *opt = this->config.option("pylon_enabled");
+        return opt != nullptr && static_cast<const ConfigOptionBool*>(opt)->value;
+    }
     bool                is_text()               const { return text_configuration.has_value(); }
     bool                is_svg() const { return emboss_shape.has_value()  && !text_configuration.has_value(); }
     bool                is_the_only_one_part() const; // behave like an object

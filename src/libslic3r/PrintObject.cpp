@@ -727,6 +727,18 @@ bool PrintObject::need_z_contouring() const
     return false;
 }
 
+// Orca: pylon injection — does this object contain any user-marked pylon volumes?
+bool PrintObject::has_pylons() const
+{
+    const ModelObject *mo = this->model_object();
+    if (mo == nullptr)
+        return false;
+    for (const ModelVolume *mv : mo->volumes)
+        if (mv != nullptr && mv->is_pylon())
+            return true;
+    return false;
+}
+
 void PrintObject::contour_z()
 {
     if (!this->set_started(posContouring)) {
