@@ -4116,6 +4116,11 @@ namespace ProcessLayer
             assert(custom_gcode->type != CustomGCode::ToolChange);
 
             CustomGCode::Type   gcode_type = custom_gcode->type;
+            // Orca: pylon injection events are handled separately (see Task 8).
+            // Bail out of the existing text-injection path so PylonInject's JSON
+            // payload is never written to the G-code as raw text.
+            if (gcode_type == CustomGCode::PylonInject)
+                return gcode;
             bool  				color_change = gcode_type == CustomGCode::ColorChange;
             bool 				tool_change = gcode_type == CustomGCode::ToolChange;
             // Tool Change is applied as Color Change for a single extruder printer only.

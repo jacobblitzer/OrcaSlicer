@@ -1,0 +1,56 @@
+#ifndef slic3r_PylonInjection_hpp_
+#define slic3r_PylonInjection_hpp_
+
+// Orca: pylon injection — descriptor for a single bottom-up injection event.
+//
+// A pylon injection event is scheduled at a specific (x, y, z_top) and tells
+// the G-code emitter to: travel dry to (x, y), descend to z_bottom, then
+// extrude bottom-up while ascending to z_top in step_height-sized segments,
+// dispensing dE total filament length, then dwell for dwell_ms and resume.
+//
+// Events are transported through the existing CustomGCode::Item scheduler:
+// the Event is JSON-serialised into Item::extra and the Item's print_z is
+// set to z_top so it fires at the matching layer boundary.
+
+#include "CustomGCode.hpp"
+
+#include <string>
+
+namespace Slic3r {
+namespace PylonInjection {
+
+struct Event
+{
+    int      pylon_id     {-1};   // unique within the print; -1 marks invalid
+    double   x            {0.0};  // pylon center XY, world coordinates (mm)
+    double   y            {0.0};
+    double   z_bottom     {0.0};  // absolute Z, bottom of this event's fill range (mm)
+    double   z_top        {0.0};  // absolute Z, top of this event's fill range; equals a Layer::print_z (mm)
+    double   radius       {0.0};  // pylon radius (mm). Volume of this event = pi * r^2 * (z_top - z_bottom).
+    double   dE           {0.0};  // total filament length to dispense across the ascent (mm)
+    int      filament_id  {0};    // 0-based extruder/filament index for this event
+    int      dwell_ms     {0};    // post-event G4 dwell (ms)
+    double   descent_speed{0.0};  // mm/min for the dry travel down
+    double   extrude_speed{0.0};  // mm/min for the ascending extrude segments
+    double   step_height  {0.0};  // delta Z per ascending extrude segment (mm)
+
+    // Sanity check used by the emitter (Task 8).
+    bool is_valid() const;
+};
+
+// JSON round-trip for transport through CustomGCode::Item::extra.
+std::string to_json(const Event &e);
+Event       from_json(const std::string &j);
+
+// Convenience round-trip with CustomGCode::Item.
+// to_item():   builds an Item with type=PylonInject, print_z=z_top, extruder=filament_id+1,
+//              and extra=to_json(e).
+// from_item(): expects item.type == PylonInject; reads extra as JSON. Returns an Event
+//              with pylon_id == -1 on parse failure or wrong type.
+CustomGCode::Item to_item(const Event &e);
+Event             from_item(const CustomGCode::Item &item);
+
+} // namespace PylonInjection
+} // namespace Slic3r
+
+#endif // slic3r_PylonInjection_hpp_

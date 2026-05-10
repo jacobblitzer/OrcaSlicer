@@ -18,6 +18,10 @@ enum Type
     ToolChange,
     Template,
     Custom,
+    // Orca: pylon injection — schedule a bottom-up extrusion event into a pre-carved
+    // cylindrical void. Item::extra carries the JSON-serialised PylonInjection::Event.
+    // Item::print_z is the event's z_top (top of the fill range, aligned to a layer).
+    PylonInject,
     Unknown,
 };
 
@@ -52,6 +56,7 @@ struct Item
             {"ToolChange",ToolChange},
             {"Template",Template},
             {"Custom",Custom},
+            {"PylonInject",PylonInject},
             {"Unknown",Unknown} };
         type = Unknown;
         if (str2type.find(type_str) != str2type.end())
