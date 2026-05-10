@@ -709,6 +709,29 @@ void MenuFactory::append_menu_items_add_volume(wxMenu* menu)
             []() { return obj_list()->is_instance_or_object_selected(); }, m_parent);
     }
 
+    // Orca: pylon injection — quick "Add Pylon (cylinder)" entry. V1 creates a
+    // default cylinder primitive, marks it NEGATIVE_VOLUME, and flips pylon_enabled
+    // on the new volume's config. Pylon-specific PrintRegionConfig overrides
+    // (period, dwell, speeds, step) surface in the existing modifier-volume
+    // settings panel because they're regular PrintRegionConfig keys.
+    append_menu_item(menu, wxID_ANY, _L("Add Pylon (cylinder)"), "",
+        [](wxCommandEvent&) {
+            obj_list()->load_generic_subobject(L("Cylinder"), ModelVolumeType::NEGATIVE_VOLUME);
+            const int obj_idx = obj_list()->get_selected_obj_idx();
+            auto *objs = obj_list()->objects();
+            if (obj_idx < 0 || objs == nullptr || obj_idx >= int(objs->size()))
+                return;
+            ModelObject *mo = (*objs)[obj_idx];
+            if (mo == nullptr || mo->volumes.empty())
+                return;
+            ModelVolume *mv = mo->volumes.back();
+            if (mv == nullptr || !mv->is_negative_volume())
+                return;
+            mv->config.set("pylon_enabled", true);
+        },
+        "menu_obj_cylinder", menu,
+        []() { return obj_list()->is_instance_or_object_selected(); }, m_parent);
+
     append_menu_item_layers_editing(menu);
 }
 
