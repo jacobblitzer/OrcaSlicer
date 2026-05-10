@@ -145,6 +145,8 @@ public:
     unsigned int solid_infill_filament(const PrintRegion &region) const;
     unsigned int top_surface_filament(const PrintRegion &region) const;
     unsigned int bottom_surface_filament(const PrintRegion &region) const;
+    // Orca: pylon injection — global filament; resolves pylon_injection_filament (0 → solid_infill).
+    unsigned int pylon_filament(const PrintConfig &print_config, const PrintRegion &region) const;
 	// Returns a zero based extruder this eec should be printed with, according to PrintRegion config or extruder_override if overriden.
 	unsigned int extruder(const ExtrusionEntityCollection &extrusions, const PrintRegion &region) const;
 

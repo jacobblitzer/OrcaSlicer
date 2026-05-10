@@ -122,6 +122,18 @@ unsigned int LayerTools::bottom_surface_filament(const PrintRegion &region) cons
 	return ((this->extruder_override == 0) ? v : this->extruder_override) - 1;
 }
 
+// Orca: pylon injection — global filament for all pylon events.
+// V1: a single dedicated reinforcement filament for the whole print, configured via
+// pylon_injection_filament (global). Falls back to solid_infill_filament when 0.
+// Takes the PrintConfig explicitly because the key is global, not on PrintRegionConfig.
+unsigned int LayerTools::pylon_filament(const PrintConfig &print_config, const PrintRegion &region) const
+{
+	int v = print_config.pylon_injection_filament.value;
+	if (v == 0)
+		return solid_infill_filament(region);
+	return ((this->extruder_override == 0) ? v : this->extruder_override) - 1;
+}
+
 // Returns a zero based extruder this eec should be printed with, according to PrintRegion config or extruder_override if overriden.
 unsigned int LayerTools::extruder(const ExtrusionEntityCollection &extrusions, const PrintRegion &region) const
 {
