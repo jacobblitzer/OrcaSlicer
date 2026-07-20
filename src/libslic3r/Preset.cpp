@@ -1270,6 +1270,19 @@ static std::vector<std::string> s_Preset_print_options{
     "zaa_dont_alternate_fill_direction",
     "zaa_min_z",
     "ironing_expansion",
+    // Orca: Pylon Injection
+    "pylon_enabled",
+    "pylon_injection_period",
+    "pylon_stagger_offset",
+    "pylon_injection_dwell_ms",
+    "pylon_descent_speed",
+    "pylon_extrude_speed",
+    "pylon_step_height",
+    "pylon_injection_filament",
+    "pylon_max_descent_depth",
+    "pylon_injection_height",
+    "pylon_fill_coefficient",
+    "pylon_helix_wall_offset",
 };
 
 static std::vector<std::string> s_Preset_filament_options {/*"filament_colour", */ "default_filament_colour", "required_nozzle_HRC", "filament_diameter", "pellet_flow_coefficient", "volumetric_speed_coefficients", "filament_type",

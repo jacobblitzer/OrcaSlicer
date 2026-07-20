@@ -153,6 +153,8 @@ enum class EGCodeExtrusionRole : uint8_t
       Brim,
       SupportTransition,
       Mixed,
+      // Orca: pylon injection — dedicated role for pylon helix toolpath.
+      PylonInjection,
     COUNT
 };
 

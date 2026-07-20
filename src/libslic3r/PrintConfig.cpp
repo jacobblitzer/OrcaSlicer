@@ -4209,6 +4209,139 @@ void PrintConfigDef::init_fff_params()
     def->mode     = comExpert;
     def->set_default_value(new ConfigOptionFloat(0.05));
 
+    // Orca: Pylon Injection — per-region keys
+    def = this->add("pylon_enabled", coBool);
+    def->label    = L("Pylon enabled");
+    def->category = L("Pylon");
+    def->tooltip  = L("Marks a negative volume as a pylon void to be filled by periodic bottom-up injection. "
+                      "Only effective when the volume's type is Negative.");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("pylon_injection_period", coInt);
+    def->label    = L("Injection period (layers)");
+    def->category = L("Pylon");
+    def->tooltip  = L("Number of layers between successive injection events for a single pylon. "
+                      "Higher values give more cooling time between events but leave longer unfilled stretches.");
+    def->min      = 1;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(20));
+
+    def = this->add("pylon_stagger_offset", coInt);
+    def->label    = L("Stagger offset (layers)");
+    def->category = L("Pylon");
+    def->tooltip  = L("Brick-bond stagger: adjacent pylons fire injection events offset by this many layers, "
+                      "so a single horizontal plane is never the simultaneous fill boundary for all pylons.");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(10));
+
+    def = this->add("pylon_injection_dwell_ms", coInt);
+    def->label    = L("Post-injection dwell");
+    def->category = L("Pylon");
+    def->tooltip  = L("Milliseconds to dwell (G4 P...) at the end of an injection event so the deposited "
+                      "plug can solidify before normal printing resumes.");
+    def->sidetext = L("ms");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(2000));
+
+    def = this->add("pylon_descent_speed", coFloat);
+    def->label    = L("Descent speed");
+    def->category = L("Pylon");
+    def->tooltip  = L("Travel speed for the dry descent into the pylon void (no extrusion).");
+    def->sidetext = L("mm/min");
+    def->min      = 1;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(300));
+
+    def = this->add("pylon_extrude_speed", coFloat);
+    def->label    = L("Injection extrude speed");
+    def->category = L("Pylon");
+    def->tooltip  = L("Speed for bottom-up extrusion inside the pylon void. Lower values reduce "
+                      "back-pressure and let the molten plug bond to the cooled walls.");
+    def->sidetext = L("mm/min");
+    def->min      = 1;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(60));
+
+    def = this->add("pylon_step_height", coFloat);
+    def->label    = L("Ascending step height");
+    def->category = L("Pylon");
+    def->tooltip  = L("Vertical step size for each ascending extrude segment during an injection event. "
+                      "Smaller steps give a smoother helix; larger steps produce chunkier toolpaths. "
+                      "0 (Default) = auto, uses the print's layer height so each helix segment matches "
+                      "one printed layer.");
+    def->sidetext = L("mm");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0));
+
+    def = this->add("pylon_fill_coefficient", coFloat);
+    def->label    = L("Fill coefficient");
+    def->category = L("Pylon");
+    def->tooltip  = L("Multiplier on the calculated injection volume. 1.0 = deposit exactly the "
+                      "cylindrical volume of the injection region. Values below 1 underfill "
+                      "(useful when the surrounding sparse infill bleeds material back into the "
+                      "void); values above 1 overfill (forces extra material outward when the "
+                      "helix can't reach the wall directly). Clamped to 0.25–1.75 to keep extrusion "
+                      "rates in a sane range.");
+    def->min      = 0.25;
+    def->max      = 1.75;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1.0));
+
+    def = this->add("pylon_helix_wall_offset", coFloat);
+    def->label    = L("Helix wall offset");
+    def->category = L("Pylon");
+    def->tooltip  = L("Distance the helix path stays away from the pylon wall, in mm. The helix "
+                      "radius equals (pylon radius − this offset). 0 = helix rides the wall (rough "
+                      "spiral that can chatter on small pylons). Larger = helix stays inside, the "
+                      "bead flows outward under nozzle pressure to fill the gap. Clamped so the "
+                      "helix radius is never less than 0.1 mm.");
+    def->sidetext = L("mm");
+    def->min      = 0;
+    def->max      = 5;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.4));
+
+    // Orca: Pylon Injection — global keys
+    def = this->add("pylon_injection_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label    = L("Pylon injection filament");
+    def->category = L("Pylon");
+    def->tooltip  = L("Filament used for every pylon injection event in the print. "
+                      "0 (Default) means use the same filament as solid_infill_filament.");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("pylon_max_descent_depth", coFloat);
+    def->label    = L("Max descent depth");
+    def->category = L("Pylon");
+    def->tooltip  = L("Maximum vertical distance the nozzle is allowed to descend below the current "
+                      "top print Z to reach a pylon's fill window. "
+                      "Set to the measured nozzle clearance for your printer minus a safety margin. "
+                      "Set 0 to disable pylon injection entirely.");
+    def->sidetext = L("mm");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(8));
+
+    def = this->add("pylon_injection_height", coFloat);
+    def->label    = L("Injection height");
+    def->category = L("Pylon");
+    def->tooltip  = L("Vertical span of each pylon injection helix, in mm. The nozzle descends "
+                      "this far below the current top print Z, then extrudes back up to the top "
+                      "in a tight helix. 0 (Default) = fill the entire pylon void from the "
+                      "pylon's top down to its bottom. The result is always capped by Max "
+                      "descent depth as a safety ceiling — if your pylon is taller than that "
+                      "cap, only the top portion gets filled.");
+    def->sidetext = L("mm");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0));
+
     def = this->add("layer_change_gcode", coString);
     def->label = L("Layer change G-code");
     def->tooltip = L("This G-code is inserted at every layer change after the Z lift.");

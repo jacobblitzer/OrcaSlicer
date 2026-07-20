@@ -128,7 +128,9 @@ static std::vector<ExPolygons> slice_volume(
 static inline bool model_volume_needs_slicing(const ModelVolume &mv)
 {
     ModelVolumeType type = mv.type();
-    return type == ModelVolumeType::MODEL_PART || type == ModelVolumeType::NEGATIVE_VOLUME || type == ModelVolumeType::PARAMETER_MODIFIER;
+    return type == ModelVolumeType::MODEL_PART || type == ModelVolumeType::NEGATIVE_VOLUME
+        || type == ModelVolumeType::PARAMETER_MODIFIER
+        || type == ModelVolumeType::PYLON_VOID;  // Orca: pylon-injection — needs its own mesh slice.
 }
 
 // Slice printable volumes, negative volumes and modifier volumes, sorted by ModelVolume::id().
@@ -179,7 +181,7 @@ static std::vector<VolumeSlices> slice_volumes_inner(
     for (const ModelVolume *model_volume : model_volumes)
         if (model_volume_needs_slicing(*model_volume)) {
             MeshSlicingParamsEx params { params_base };
-            if (! model_volume->is_negative_volume())
+            if (! model_volume->is_carving_volume() /* Orca: NEGATIVE_VOLUME or PYLON_VOID */)
                 params.extra_offset = extra_offset;
             if (layer_ranges.size() == 1) {
                 if (const PrintObjectRegions::LayerRangeRegions &layer_range = layer_ranges.front(); layer_range.has_volume(model_volume->id())) {
@@ -414,20 +416,20 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                                 if (next_region_same_modifier)
                                     // To be used in the following iteration.
                                     temp_slices[idx_region + 1].expolygons = std::move(source);
-                            } else if ((region.model_volume->is_model_part() && clip_multipart_objects) || region.model_volume->is_negative_volume()) {
+                            } else if ((region.model_volume->is_model_part() && clip_multipart_objects) || region.model_volume->is_carving_volume() /* Orca: NEGATIVE_VOLUME or PYLON_VOID */) {
                                 // Clip every non-zero region preceding it.
                                 for (int idx_region2 = 0; idx_region2 < idx_region; ++ idx_region2)
                                     if (! temp_slices[idx_region2].expolygons.empty()) {
                                         // Skip trim_overlap for now, because it slow down the performace so much for some special cases
 #if 1
                                         if (const PrintObjectRegions::VolumeRegion& region2 = layer_range.volume_regions[idx_region2];
-                                            !region2.model_volume->is_negative_volume() && overlap_in_xy(*region.bbox, *region2.bbox))
+                                            !region2.model_volume->is_carving_volume() /* Orca: NEGATIVE_VOLUME or PYLON_VOID */ && overlap_in_xy(*region.bbox, *region2.bbox))
                                             temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
 #else
                                         const PrintObjectRegions::VolumeRegion& region2 = layer_range.volume_regions[idx_region2];
-                                        if (!region2.model_volume->is_negative_volume() && overlap_in_xy(*region.bbox, *region2.bbox))
+                                        if (!region2.model_volume->is_carving_volume() /* Orca: NEGATIVE_VOLUME or PYLON_VOID */ && overlap_in_xy(*region.bbox, *region2.bbox))
                                             //BBS: handle negative_volume seperately, always minus the negative volume and don't need to trim overlap
-                                            if (!region.model_volume->is_negative_volume())
+                                            if (!region.model_volume->is_carving_volume() /* Orca: NEGATIVE_VOLUME or PYLON_VOID */)
                                                 trim_overlap(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
                                             else
                                                 temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
@@ -600,7 +602,7 @@ void applyNegtiveVolumes(ModelVolumePtrs model_volumes, const std::vector<Volume
     ExPolygons negTotal;
     for (const auto& vs : objSliceByVolume) {
         for (const auto& mv : model_volumes) {
-            if (vs.volume_id == mv->id() && mv->is_negative_volume()) {
+            if (vs.volume_id == mv->id() && mv->is_carving_volume()) { // Orca: NEGATIVE_VOLUME or PYLON_VOID
                 if (vs.slices.size() > 0) {
                     append(negTotal, vs.slices.front());
                 }

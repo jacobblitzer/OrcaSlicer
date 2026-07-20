@@ -37,6 +37,10 @@ enum ExtrusionRole : uint8_t {
     erSupportTransition,
     erWipeTower,
     erCustom,
+    // Orca: pylon injection — distinct role for the helix toolpath emitted by the pylon
+    // injection scheduler. Keeps pylons visually + statistically separate from sparse infill
+    // in the gcode preview.
+    erPylonInjection,
     // Extrusion role for a collection with multiple extrusion roles.
     erMixed,
     erCount

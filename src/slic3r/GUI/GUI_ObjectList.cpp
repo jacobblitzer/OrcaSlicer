@@ -2440,8 +2440,14 @@ void ObjectList::load_generic_subobject(const std::string& type_name, const Mode
     // BBS: backup
     Slic3r::save_object_mesh(model_object);
 
-    const wxString name = _L("Generic") + "-" + _(type_name);
-    new_volume->name = into_u8(name);
+    // Orca: pylon-injection — for PYLON_VOID volumes, leave the name unset so the
+    // "Add Pylon (cylinder)" menu handler can set "Pylon" without racing the tree refresh.
+    if (type != ModelVolumeType::PYLON_VOID) {
+        const wxString name = _L("Generic") + "-" + _(type_name);
+        new_volume->name = into_u8(name);
+    } else {
+        new_volume->name = "Pylon";
+    }
 
     // set a default extruder value, since user can't add it manually
     // BBS

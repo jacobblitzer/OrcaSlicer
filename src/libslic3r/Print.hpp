@@ -2,6 +2,7 @@
 #define slic3r_Print_hpp_
 
 #include "PrintBase.hpp"
+#include "CustomGCode.hpp"
 #include "Fill/FillAdaptive.hpp"
 #include "Fill/FillLightning.hpp"
 
@@ -92,7 +93,13 @@ enum PrintStep {
 
 enum PrintObjectStep {
     posSlice, posPerimeters,posEstimateCurledExtrusions, posPrepareInfill,
-    posInfill, posIroning, posContouring, posSupportMaterial, posSimplifyPath, posSimplifySupportPath,
+    posInfill, posIroning, posContouring,
+    // Orca: pylon injection — produces the per-pylon event list (stored on
+    // Model::custom_gcode_per_print_z) consumed by the G-code emitter. Runs
+    // after infill so footprint subtraction is already in place, and before
+    // support so support generation can be informed in the future.
+    posSchedulePylonInjection,
+    posSupportMaterial, posSimplifyPath, posSimplifySupportPath,
     // BBS
     posDetectOverhangsForLift,
     posSimplifyWall, posSimplifyInfill,
@@ -429,6 +436,23 @@ public:
     bool                        has_support()           const { return m_config.enable_support || m_config.enforce_support_layers > 0; }
     bool                        has_raft()              const { return m_config.raft_layers > 0; }
     bool                        has_support_material()  const { return this->has_support() || this->has_raft(); }
+    // Orca: does this object contain any user-marked pylon volumes?
+    bool                        has_pylons() const;
+    // Orca: per-layer cylinder footprints of all pylon volumes (× instances),
+    // pre-intersected with Layer::lslices so they are guaranteed to be
+    // inside the model at each Z. Built in compute_pylon_footprints();
+    // empty until then. Indexed by layer id.
+    const ExPolygons&           pylon_footprints_at_layer(size_t layer_id) const;
+    // Orca: pylon-injection — slicer-owned copy of pylon CustomGCode::Item batches.
+    // Lives on PrintObject (not on m_print->model()), so Print::apply() can't overwrite
+    // them via the source-model sync at PrintApply.cpp:1316. Print::process restores
+    // these into m_model.plates_custom_gcodes before psWipeTower.
+    const std::vector<CustomGCode::Item>& pylon_items() const { return m_pylon_items; }
+    // Orca: pylon-injection — per-pylon-instance skip reasons, populated by
+    // schedule_pylon_injections() each time it runs. Snapshot file 07_pylon_status.txt
+    // surfaces these so the user can see *why* a specific pylon didn't get a helix.
+    // Empty when every detected pylon was scheduled successfully.
+    const std::vector<std::string>& pylon_skip_reasons() const { return m_pylon_skip_reasons; }
     // Checks if the model object is painted using the multi-material painting gizmo.
     bool                        is_mm_painted()         const { return this->model_object()->is_mm_painted(); }
     // Checks if the model object is painted using the fuzzy skin painting gizmo.
@@ -498,6 +522,11 @@ private:
     void ironing();
     bool need_z_contouring() const;
     void contour_z();
+    // Orca: pylon injection — populate m_pylon_footprints_per_layer before make_fills.
+    void compute_pylon_footprints();
+    // Orca: pylon injection — walk pylon volumes × instances, generate the event list,
+    // and append CustomGCode::Item entries (type PylonInject) to Model::custom_gcode_per_print_z.
+    void schedule_pylon_injections();
     void generate_support_material();
     void estimate_curled_extrusions();
     void simplify_extrusion_path();
@@ -566,6 +595,22 @@ private:
 
     std::pair<FillAdaptive::OctreePtr, FillAdaptive::OctreePtr> m_adaptive_fill_octrees;
     FillLightning::GeneratorPtr m_lightning_generator;
+
+    // Orca: pylon injection — per-layer footprints (XY) of all pylon volumes × instances,
+    // pre-intersected with Layer::lslices at that Z so they're guaranteed to be inside the model.
+    // Indexed by layer id. Empty until compute_pylon_footprints() is called.
+    std::vector<ExPolygons>     m_pylon_footprints_per_layer;
+
+    // Orca: pylon injection — slicer-owned, apply-immune copy of the CustomGCode::Item batches
+    // produced by schedule_pylon_injections(). Used as the source of truth when restoring
+    // m_print->model().plates_custom_gcodes between Print::apply() (which wipes them) and
+    // gcode emission.
+    std::vector<CustomGCode::Item> m_pylon_items;
+
+    // Orca: pylon-injection — per-pylon-instance skip log, refreshed each time
+    // schedule_pylon_injections() runs. One entry per inspected pylon that was NOT scheduled,
+    // including the world-XY location and the reason. Empty when everything ran clean.
+    std::vector<std::string>       m_pylon_skip_reasons;
 
     std::vector < VolumeSlices >            firstLayerObjSliceByVolume;
     std::vector<groupedVolumeSlices>        firstLayerObjSliceByGroups;

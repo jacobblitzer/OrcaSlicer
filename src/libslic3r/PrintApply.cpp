@@ -542,7 +542,9 @@ private:
 static inline bool model_volume_solid_or_modifier(const ModelVolume &mv)
 {
     ModelVolumeType type = mv.type();
-    return type == ModelVolumeType::MODEL_PART || type == ModelVolumeType::NEGATIVE_VOLUME || type == ModelVolumeType::PARAMETER_MODIFIER;
+    return type == ModelVolumeType::MODEL_PART || type == ModelVolumeType::NEGATIVE_VOLUME
+        || type == ModelVolumeType::PARAMETER_MODIFIER
+        || type == ModelVolumeType::PYLON_VOID;  // Orca: pylon-injection — carves the parent and triggers injection scheduling.
 }
 
 static inline Transform3f trafo_for_bbox(const Transform3d &object_trafo, const Transform3d &volume_trafo)
@@ -1022,8 +1024,8 @@ static PrintObjectRegions* generate_print_object_regions(
                             get_create_region(region_config_from_model_volume(default_region_config, layer_range.config, volume, num_extruders)),
                             bbox
                         });
-                    } else if (volume.is_negative_volume()) {
-                        // Add a negative (subtractor) volume. Such volume has neither region nor parent volume assigned.
+                    } else if (volume.is_carving_volume()) {
+                        // Add a carving volume (negative or pylon). Such volume has neither region nor parent volume assigned.
                         layer_range.volume_regions.push_back({ &volume, -1, nullptr, bbox });
                     } else {
                         assert(volume.is_modifier());
@@ -1301,17 +1303,43 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     } else {
         //BBS: replace model custom gcode with current plate custom gcode
         m_model.curr_plate_index = model.curr_plate_index;
-        if (m_model.get_curr_plate_custom_gcodes() != model.get_curr_plate_custom_gcodes()) {
+        // Orca: pylon injection — PylonInject items are slicer-generated, not user-edited;
+        // they live on m_model but not on the source model. If we let the raw inequality check
+        // below fire on pylon presence, apply would invalidate psGCodeExport, the GUI would
+        // trigger a fresh slice, the new slice would re-add pylons, and the loop would repeat
+        // forever — flickering the preview. Filter pylons out of BOTH the comparison and the
+        // overwrite-from-source so apply ignores them entirely.
+        auto strip_pylons = [](const CustomGCode::Info &src) {
+            CustomGCode::Info out;
+            out.mode = src.mode;
+            out.gcodes.reserve(src.gcodes.size());
+            for (const CustomGCode::Item &it : src.gcodes)
+                if (it.type != CustomGCode::PylonInject)
+                    out.gcodes.push_back(it);
+            return out;
+        };
+        const CustomGCode::Info slicer_no_pylons = strip_pylons(m_model.get_curr_plate_custom_gcodes());
+        const CustomGCode::Info source_no_pylons = strip_pylons(model.get_curr_plate_custom_gcodes());
+        if (slicer_no_pylons != source_no_pylons) {
             update_apply_status(num_extruders_changed ||
                 // Tool change G-codes are applied as color changes for a single extruder printer, no need to invalidate tool ordering.
                 //FIXME The tool ordering may be invalidated unnecessarily if the custom_gcode_per_print_z.mode is not applicable
                 // to the active print / model state, and then it is reset, so it is being applicable, but empty, thus the effect is the same.
-                (num_extruders > 1 && custom_per_printz_gcodes_tool_changes_differ(m_model.get_curr_plate_custom_gcodes().gcodes, model.get_curr_plate_custom_gcodes().gcodes)) ?
+                (num_extruders > 1 && custom_per_printz_gcodes_tool_changes_differ(slicer_no_pylons.gcodes, source_no_pylons.gcodes)) ?
                 // The Tool Ordering and the Wipe Tower are no more valid.
                 this->invalidate_steps({ psWipeTower, psGCodeExport }) :
                 // There is no change in Tool Changes stored in custom_gcode_per_print_z, therefore there is no need to update Tool Ordering.
                 this->invalidate_step(psGCodeExport));
+            // Preserve our PylonInject items when overwriting from source.
+            std::vector<CustomGCode::Item> preserved_pylons;
+            for (const CustomGCode::Item &it : m_model.get_curr_plate_custom_gcodes().gcodes)
+                if (it.type == CustomGCode::PylonInject)
+                    preserved_pylons.push_back(it);
             m_model.plates_custom_gcodes[m_model.curr_plate_index] = model.get_curr_plate_custom_gcodes();
+            for (const CustomGCode::Item &it : preserved_pylons)
+                m_model.plates_custom_gcodes[m_model.curr_plate_index].gcodes.push_back(it);
+            std::sort(m_model.plates_custom_gcodes[m_model.curr_plate_index].gcodes.begin(),
+                      m_model.plates_custom_gcodes[m_model.curr_plate_index].gcodes.end());
         }
         if (model_object_list_equal(m_model, model)) {
             // The object list did not change.
@@ -1388,7 +1416,8 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     PrintObjectStatusDB print_object_status_db(m_objects);
 
     // 3) Synchronize ModelObjects & PrintObjects.
-    const std::initializer_list<ModelVolumeType> solid_or_modifier_types { ModelVolumeType::MODEL_PART, ModelVolumeType::NEGATIVE_VOLUME, ModelVolumeType::PARAMETER_MODIFIER };
+    // Orca: PYLON_VOID included — it carves the parent and triggers pylon scheduling, must be tracked for change-detection like NEGATIVE_VOLUME.
+    const std::initializer_list<ModelVolumeType> solid_or_modifier_types { ModelVolumeType::MODEL_PART, ModelVolumeType::NEGATIVE_VOLUME, ModelVolumeType::PARAMETER_MODIFIER, ModelVolumeType::PYLON_VOID };
     for (size_t idx_model_object = 0; idx_model_object < model.objects.size(); ++ idx_model_object) {
         ModelObject       &model_object        = *m_model.objects[idx_model_object];
         ModelObjectStatus &model_object_status = const_cast<ModelObjectStatus&>(model_object_status_db.reuse(model_object));

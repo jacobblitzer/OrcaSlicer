@@ -154,6 +154,8 @@ ColorRGBA GLVolume::MODEL_MIDIFIER_COL   = {1.0f, 1.0f, 0.0f, 0.6f};
 ColorRGBA GLVolume::MODEL_NEGTIVE_COL    = {0.3f, 0.3f, 0.3f, 0.4f};
 ColorRGBA GLVolume::SUPPORT_ENFORCER_COL = {0.3f, 0.3f, 1.0f, 0.4f};
 ColorRGBA GLVolume::SUPPORT_BLOCKER_COL  = {1.0f, 0.3f, 0.3f, 0.4f};
+// Orca: pylon-injection — translucent purple/magenta for visual distinction in the 3D view.
+ColorRGBA GLVolume::PYLON_VOID_COL       = {0.7f, 0.2f, 0.9f, 0.5f};
 
 ColorRGBA GLVolume::MODEL_HIDDEN_COL  = {0.f, 0.f, 0.f, 0.3f};
 
@@ -356,7 +358,11 @@ void GLVolume::set_render_color()
 ColorRGBA color_from_model_volume(const ModelVolume& model_volume)
 {
     ColorRGBA color;
-    if (model_volume.is_negative_volume())
+    // Orca: pylon-injection — check pylon BEFORE the negative_volume fallback, since
+    // is_pylon() also returns true for legacy NEGATIVE_VOLUME+pylon_enabled flag.
+    if (model_volume.is_pylon())
+        return GLVolume::PYLON_VOID_COL;
+    else if (model_volume.is_negative_volume())
         return GLVolume::MODEL_NEGTIVE_COL;
     else if (model_volume.is_modifier())
 #if ENABLE_MODIFIERS_ALWAYS_TRANSPARENT

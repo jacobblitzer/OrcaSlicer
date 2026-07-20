@@ -37,6 +37,7 @@
 #include "I18N.hpp"
 #include "GLCanvas3D.hpp"
 #include "Plater.hpp"
+#include "PylonDebugSnapshot.hpp"
 #include "WebViewDialog.hpp"
 #include "../Utils/Process.hpp"
 #include "format.hpp"
@@ -2548,6 +2549,11 @@ static wxMenu* generate_help_menu()
     // Open Config Folder
     append_menu_item(helpMenu, wxID_ANY, _L("Show Configuration Folder"), _L("Show Configuration Folder"),
         [](wxCommandEvent&) { Slic3r::GUI::desktop_open_datadir_folder(); });
+
+    // Orca: pylon-injection debug snapshot
+    append_menu_item(helpMenu, wxID_ANY, _L("Export Pylon Debug Snapshot..."),
+        _L("Capture the current model, configs, custom gcodes, and recent log to a folder for triage."),
+        [](wxCommandEvent&) { Slic3r::GUI::export_pylon_debug_snapshot(wxGetApp().mainframe); });
 
     append_menu_item(helpMenu, wxID_ANY, _L("Show Tip of the Day"), _L("Show Tip of the Day"), [](wxCommandEvent&) {
         wxGetApp().plater()->get_dailytips()->open();

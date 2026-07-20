@@ -1214,6 +1214,19 @@ void Layer::make_fills(FillAdaptive::Octree* adaptive_fill_octree, FillAdaptive:
 #endif /* SLIC3R_DEBUG_SLICE_PROCESSING */
 
     for (SurfaceFill &surface_fill : surface_fills) {
+        // Orca: pylon injection (Hook B) — for sparse internal infill only,
+        // subtract any pylon footprints at this layer so the pattern is generated
+        // around the void. Solid/top/bottom/bridge surfaces are left alone so they
+        // cap and seal the pylon, and stInternalVoid is unaffected.
+        if (surface_fill.surface.is_internal() && !surface_fill.surface.is_bridge() && !surface_fill.surface.is_solid()) {
+            const ExPolygons &voids = this->object()->pylon_footprints_at_layer(this->id());
+            if (!voids.empty()) {
+                surface_fill.expolygons = diff_ex(surface_fill.expolygons, voids);
+                if (surface_fill.expolygons.empty())
+                    continue;  // pylon consumed the entire sparse region; nothing to fill
+            }
+        }
+
         // Create the filler object.
         std::unique_ptr<Fill> f = std::unique_ptr<Fill>(Fill::new_from_type(surface_fill.params.pattern));
         f->set_bounding_box(bbox);

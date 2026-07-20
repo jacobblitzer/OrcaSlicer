@@ -373,6 +373,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/PhysicalPrinterDialog.hpp
     GUI/Plater.cpp
     GUI/Plater.hpp
+    GUI/PylonDebugSnapshot.cpp
+    GUI/PylonDebugSnapshot.hpp
     GUI/PlateSettingsDialog.cpp
     GUI/PlateSettingsDialog.hpp
     GUI/Preferences.cpp

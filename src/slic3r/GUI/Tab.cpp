@@ -2355,6 +2355,27 @@ void TabPrint::build()
         // Orca: it's not used yet, so hide it in UI for now
         // optgroup->append_single_option_line("ironing_expansion");
 
+        // Orca: pylon injection — V1 surface for the global safety key and per-event tuning.
+        // SAFETY: pylon_max_descent_depth defaults to 0, which disables injection. Users must
+        // explicitly set this to their measured nozzle clearance for events to fire.
+        optgroup = page->new_optgroup(L("Pylon Injection"), L"param_advanced");
+        optgroup->append_single_option_line("pylon_max_descent_depth");
+        optgroup->append_single_option_line("pylon_injection_height");
+        optgroup->append_single_option_line("pylon_injection_filament");
+        // pylon_enabled is vestigial — was for legacy NEGATIVE_VOLUME+flag pattern. PYLON_VOID
+        // type is now first-class and is_pylon() returns true regardless. Hidden from UI.
+        // optgroup->append_single_option_line("pylon_enabled");
+        optgroup->append_single_option_line("pylon_step_height");
+        optgroup->append_single_option_line("pylon_descent_speed");
+        optgroup->append_single_option_line("pylon_extrude_speed");
+        optgroup->append_single_option_line("pylon_fill_coefficient");
+        optgroup->append_single_option_line("pylon_helix_wall_offset");
+        optgroup->append_single_option_line("pylon_injection_dwell_ms");
+        // pylon_injection_period is meaningless in the one-shot-per-pylon model — hidden.
+        // optgroup->append_single_option_line("pylon_injection_period");
+        // pylon_stagger_offset is reserved for V2 multi-coloring — hidden from the V1 UI.
+        // optgroup->append_single_option_line("pylon_stagger_offset");
+
         optgroup = page->new_optgroup(L("Wall generator"), L"param_wall_generator");
         optgroup->append_single_option_line("wall_generator", "quality_settings_wall_generator");
         optgroup->append_single_option_line("wall_transition_angle", "quality_settings_wall_generator#wall-transitioning-threshhold-angle");

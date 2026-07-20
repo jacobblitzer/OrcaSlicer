@@ -13,6 +13,7 @@
 #include "GCode/PrintExtents.hpp"
 #include "GCode/Thumbnails.hpp"
 #include "GCode/WipeTower.hpp"
+#include "PylonInjection.hpp"
 #include "ShortestPath.hpp"
 #include "Print.hpp"
 #include "Utils.hpp"
@@ -45,6 +46,7 @@
 
 #include <boost/nowide/iostream.hpp>
 #include <boost/nowide/cstdio.hpp>
+#include <boost/nowide/fstream.hpp>
 #include <boost/nowide/cstdlib.hpp>
 
 #include "SVG.hpp"
@@ -4116,6 +4118,123 @@ namespace ProcessLayer
             assert(custom_gcode->type != CustomGCode::ToolChange);
 
             CustomGCode::Type   gcode_type = custom_gcode->type;
+            // Orca: pylon injection — synthesize a bottom-up injection block per event.
+            // The Item's extra carries a JSON-encoded vector<PylonInjection::Event> (batched
+            // because the existing scheduler only consumes one Item per layer).
+            if (gcode_type == CustomGCode::PylonInject) {
+                const std::vector<PylonInjection::Event> events = PylonInjection::from_item_batch(*custom_gcode);
+                if (events.empty())
+                    return gcode;
+
+                // Note: pylon_max_descent_depth lives on PrintObjectConfig (not the print-level
+                // config passed in here). The scheduler is the authoritative gate — events with
+                // out-of-range height are dropped before emission, so no validation is needed here.
+                const unsigned int saved_filament = gcodegen.writer().filament() ? gcodegen.writer().filament()->id() : 0;
+
+                std::ostringstream out;
+                for (const PylonInjection::Event &ev : events) {
+                    if (!ev.is_valid()) {
+                        BOOST_LOG_TRIVIAL(error) << "pylon-injection: dropping invalid event id=" << ev.pylon_id;
+                        continue;
+                    }
+
+                    // Pylons now have their own erPylonInjection role + magenta color + dedicated
+                    // line in the gcode preview's Line Type legend / bbox calc. Use the dynamic
+                    // reserved-tag prefix so this works on both BBL printers ("; FEATURE: ") and
+                    // compatible printers (";TYPE:"). Hardcoded ";TYPE:" was silently ignored by
+                    // the BBL gcode processor, leaving the helix tagged with whatever the prior
+                    // section's role was (commonly "Top surface" or "Seam").
+                    out << ";" << GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Role)
+                        << ExtrusionEntity::role_to_string(erPylonInjection) << "\n";
+                    out << ";PYLON_INJECT_START id=" << ev.pylon_id
+                        << " x=" << ev.x << " y=" << ev.y
+                        << " z_bottom=" << ev.z_bottom << " z_top=" << ev.z_top
+                        << " dE=" << ev.dE << " filament=" << ev.filament_id << "\n";
+
+                    // Optional tool change to event's filament. V1: no wipe-tower trip.
+                    const bool need_tc_in = ((int)saved_filament != ev.filament_id);
+                    if (need_tc_in)
+                        out << gcodegen.writer().set_extruder((unsigned)ev.filament_id);
+
+                    // Retract before the out-of-plane travel.
+                    out << gcodegen.writer().retract();
+
+                    // Travel to (x, y, z_bottom) at descent speed (no extrusion).
+                    // Helix path radius — the toolhead's spiral, NOT the pylon's cylinder radius.
+                    // The scheduler computes ev.helix_radius from (pylon_radius - pylon_helix_wall_offset),
+                    // clamped to a 0.1 mm minimum. dE (per-segment extrusion) still comes from the
+                    // pylon's full cylinder volume × pylon_fill_coefficient; the helix path lays
+                    // that material down in a continuous spiral that the bead spreads outward from
+                    // under nozzle pressure. Slow movement + huge dE = nozzle squeezes the void
+                    // full as it crawls up the helix.
+                    const double pylon_helix_radius = ev.helix_radius;
+                    constexpr double pylon_helix_pitch  = 1.0;   // mm of Z per full turn
+                    constexpr double two_pi             = 2.0 * 3.14159265358979323846;
+                    const auto helix_xy = [&](double z_rel) {
+                        const double theta = z_rel * two_pi / pylon_helix_pitch;
+                        return Vec2d(ev.x + pylon_helix_radius * std::cos(theta),
+                                     ev.y + pylon_helix_radius * std::sin(theta));
+                    };
+
+                    // Travel to theta=0 of the helix at the floor.
+                    // XY travel uses normal travel speed (fast XY is fine — we're above the print).
+                    const Vec2d helix_start_xy = helix_xy(0.0);
+                    out << gcodegen.writer().travel_to_xy(helix_start_xy, " ; pylon: travel to helix start");
+
+                    // Z descent: emit the G1 manually so we can run it at descent_speed.
+                    // writer().travel_to_z() always emits config.travel_speed_z (typically 30000 mm/min,
+                    // the fast travel-Z speed) regardless of any prior set_speed call. That defeats
+                    // the pylon_descent_speed setting entirely. We override by writing the G1 line
+                    // ourselves, then sync the writer's internal m_pos so subsequent extrude_to_xyz
+                    // calls correctly decide whether to emit Z deltas.
+                    {
+                        std::ostringstream ss;
+                        ss << "G1 Z" << ev.z_bottom << " F" << ev.descent_speed << " ; pylon: descend at descent_speed\n";
+                        out << ss.str();
+                        Vec3d new_pos = gcodegen.writer().get_position();
+                        new_pos.z() = ev.z_bottom;
+                        gcodegen.writer().set_position(new_pos);
+                    }
+
+                    // Unretract for extrusion.
+                    out << gcodegen.writer().unretract();
+
+                    // Ascending helix. dE is distributed linearly with dz across [z_bottom, z_top];
+                    // path length per unit dz is larger now, so per-segment dE is unchanged but
+                    // per-mm-of-path deposit is lower — closer to realistic extrusion ratios than
+                    // the prior pure-vertical column.
+                    const double total_dz = ev.z_top - ev.z_bottom;
+                    const double dE_per_dz = (total_dz > 0.0) ? (ev.dE / total_dz) : 0.0;
+                    out << gcodegen.writer().set_speed(ev.extrude_speed, "pylon: extrude");
+                    double cur_z = ev.z_bottom;
+                    while (cur_z < ev.z_top - 1e-6) {
+                        const double next_z = std::min(cur_z + ev.step_height, ev.z_top);
+                        const double dz_seg = next_z - cur_z;
+                        const double dE_seg = dE_per_dz * dz_seg;
+                        const Vec2d hxy = helix_xy(next_z - ev.z_bottom);
+                        out << gcodegen.writer().extrude_to_xyz(Vec3d(hxy.x(), hxy.y(), next_z), dE_seg,
+                                                                " ; pylon: extrude helix segment");
+                        cur_z = next_z;
+                    }
+
+                    // Retract again to leave the toolhead in the same state subsequent
+                    // travels expect (next extrusion will unretract before its first move).
+                    out << gcodegen.writer().retract();
+
+                    // Cooling dwell.
+                    if (ev.dwell_ms > 0) {
+                        out << "G4 P" << ev.dwell_ms << " ; pylon: cooling dwell\n";
+                    }
+
+                    // Tool change back to the layer's prior filament if we switched.
+                    if (need_tc_in)
+                        out << gcodegen.writer().set_extruder(saved_filament);
+
+                    out << ";PYLON_INJECT_END\n";
+                }
+                gcode += out.str();
+                return gcode;
+            }
             bool  				color_change = gcode_type == CustomGCode::ColorChange;
             bool 				tool_change = gcode_type == CustomGCode::ToolChange;
             // Tool Change is applied as Color Change for a single extruder printer only.
@@ -6165,6 +6284,15 @@ void GCode::GCodeOutputStream::write(const char *what)
         fwrite(gcode, 1, ::strlen(gcode), this->f);
         //FIXME don't allocate a string, maybe process a batch of lines?
         m_processor.process_buffer(std::string(gcode));
+    }
+}
+
+// Orca: explicit-size overload so embedded NULs don't truncate writes.
+void GCode::GCodeOutputStream::write(const std::string &what)
+{
+    if (! what.empty()) {
+        fwrite(what.data(), 1, what.size(), this->f);
+        m_processor.process_buffer(what);
     }
 }
 
