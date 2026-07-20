@@ -773,64 +773,48 @@ void PrintObject::compute_pylon_footprints()
     if (mo == nullptr)
         return;
 
-    size_t pylon_volume_count    = 0;
-    size_t pylon_instance_count  = 0;
-    size_t footprint_stamps      = 0;
-
     for (const ModelVolume *mv : mo->volumes) {
         if (mv == nullptr || !mv->is_pylon())
             continue;
-        ++pylon_volume_count;
 
         const BoundingBoxf3 local_bbox = mv->mesh().bounding_box();
 
-        for (const ModelInstance *mi : mo->instances) {
-            if (mi == nullptr)
+        // layer->lslices is in the PrintObject's trafo_centered() frame (instance offset
+        // removed, object centered on origin). We compute the circle in that same frame
+        // by transforming the local bbox with trafo_centered() * mv->get_matrix().
+        const Transform3d slicer_trafo = this->trafo_centered() * mv->get_matrix();
+        const BoundingBoxf3 slicer_bbox = local_bbox.transformed(slicer_trafo);
+
+        const double cx     = 0.5 * (slicer_bbox.min.x() + slicer_bbox.max.x());
+        const double cy     = 0.5 * (slicer_bbox.min.y() + slicer_bbox.max.y());
+        const double radius = 0.5 * std::max(slicer_bbox.size().x(), slicer_bbox.size().y());
+        const double z_min  = slicer_bbox.min.z();
+        const double z_max  = slicer_bbox.max.z();
+
+        if (radius <= 0.0 || z_max <= z_min) {
+            BOOST_LOG_TRIVIAL(warning) << "pylon-injection: skipping volume '" << mv->name
+                                       << "' — degenerate bbox (radius=" << radius
+                                       << " z_extent=" << (z_max - z_min) << ")";
+            continue;
+        }
+
+        Polygon circle = make_circle_num_segments(scale_(radius), 32);
+        circle.translate(scale_(cx), scale_(cy));
+        const ExPolygon pylon_xy(circle);
+
+        for (size_t li = 0; li < m_layers.size(); ++li) {
+            const Layer *layer = m_layers[li];
+            if (layer == nullptr)
                 continue;
-            ++pylon_instance_count;
-
-            const Transform3d trafo = mi->get_matrix() * mv->get_matrix();
-            const BoundingBoxf3 world_bbox = local_bbox.transformed(trafo);
-
-            const double cx    = 0.5 * (world_bbox.min.x() + world_bbox.max.x());
-            const double cy    = 0.5 * (world_bbox.min.y() + world_bbox.max.y());
-            const double radius = 0.5 * std::max(world_bbox.size().x(), world_bbox.size().y());
-            const double z_min = world_bbox.min.z();
-            const double z_max = world_bbox.max.z();
-
-            if (radius <= 0.0 || z_max <= z_min)
+            if (layer->print_z < z_min || layer->print_z > z_max)
                 continue;
 
-            Polygon circle = make_circle_num_segments(scale_(radius), 32);
-            circle.translate(scale_(cx), scale_(cy));
-            const ExPolygon pylon_xy(circle);
-
-            for (size_t li = 0; li < m_layers.size(); ++li) {
-                const Layer *layer = m_layers[li];
-                if (layer == nullptr)
-                    continue;
-                if (layer->print_z < z_min || layer->print_z > z_max)
-                    continue;
-
-                ExPolygons clipped = intersection_ex(pylon_xy, layer->lslices);
-                if (clipped.empty())
-                    continue;
-                append(m_pylon_footprints_per_layer[li], std::move(clipped));
-                ++footprint_stamps;
-            }
+            ExPolygons clipped = intersection_ex(pylon_xy, layer->lslices);
+            if (clipped.empty())
+                continue;
+            append(m_pylon_footprints_per_layer[li], std::move(clipped));
         }
     }
-
-    size_t layers_with_footprint = 0;
-    for (const ExPolygons &f : m_pylon_footprints_per_layer)
-        if (!f.empty())
-            ++layers_with_footprint;
-
-    BOOST_LOG_TRIVIAL(info) << "pylon-injection: " << pylon_volume_count
-                            << " volume(s) × " << (pylon_instance_count / std::max<size_t>(pylon_volume_count, 1))
-                            << " instance(s); " << footprint_stamps
-                            << " per-layer footprint stamps over "
-                            << layers_with_footprint << " / " << m_layers.size() << " layers";
 }
 
 // Orca: pylon injection — schedule the per-event list.
@@ -864,8 +848,11 @@ void PrintObject::schedule_pylon_injections()
     if (mo == nullptr)
         return;
 
-    const PrintConfig &print_config = m_print->config();
-    const double max_descent = print_config.pylon_max_descent_depth.value;
+    // Orca: pylon_max_descent_depth and pylon_injection_filament moved to PrintObjectConfig so
+    // they surface on TabPrint (process preset). Read via this->m_config (PrintObjectConfig).
+    const PrintConfig       &print_config  = m_print->config();
+    const PrintObjectConfig &object_config = this->m_config;
+    const double max_descent = object_config.pylon_max_descent_depth.value;
     if (max_descent <= 0.0) {
         BOOST_LOG_TRIVIAL(warning) << "pylon-injection: pylon volumes present but pylon_max_descent_depth is 0; "
                                    << "all injection events disabled (safe failure mode).";
@@ -893,7 +880,7 @@ void PrintObject::schedule_pylon_injections()
     }
 
     // Resolve global pylon filament. V1 fallback: filament 0 if unset.
-    const int filament_one_based = print_config.pylon_injection_filament.value;
+    const int filament_one_based = object_config.pylon_injection_filament.value;
     const int filament_id = (filament_one_based > 0) ? (filament_one_based - 1) : 0;
 
     // Volume → filament length math. Mirrors Extruder::e_per_mm3 (Extruder.cpp:9-19).
@@ -918,37 +905,46 @@ void PrintObject::schedule_pylon_injections()
     // Group events by snapped layer index so we can batch them into one Item per layer.
     std::map<size_t, std::vector<PylonInjection::Event>> events_by_layer;
 
-    int    next_pylon_id        = 0;
-    size_t pylon_index_for_stagger = 0;
-    int    skipped_floor        = 0;
-    int    skipped_support      = 0;
+    int next_pylon_id  = 0;
+
+    // (B) Per-region pylon settings: read from the merged PrintRegionConfig (which includes
+    // preset values). Previously we read from mv->config (ModelVolume override), so the
+    // preset's pylon_step_height / _descent_speed / _extrude_speed / _injection_dwell_ms
+    // were silently ignored. Per-volume overrides are V2; for V1 every pylon on this object
+    // uses the same per-region settings as region 0.
+    const PrintRegionConfig *region_cfg = (this->num_printing_regions() > 0)
+        ? &this->printing_region(0).config()
+        : nullptr;
+    const int    dwell_ms      = region_cfg ? std::max(0,   region_cfg->pylon_injection_dwell_ms.value) : 2000;
+    const double descent_speed = region_cfg ? std::max(1.0, region_cfg->pylon_descent_speed.value)      : 300.0;
+    const double extrude_speed = region_cfg ? std::max(1.0, region_cfg->pylon_extrude_speed.value)      : 60.0;
+    // step_height = 0 (the new sentinel for "auto") → use the print's layer_height so the
+    // helix gets at least one segment per layer of event_height. Previously hardcoded 0.4mm
+    // was too coarse for fine-layer prints (an event of 2*0.08 = 0.16mm collapsed to a single
+    // ~1mm line that doesn't look like a helix in the preview).
+    const double configured_step = region_cfg ? region_cfg->pylon_step_height.value : 0.4;
+    const double layer_h_auto    = std::max(0.05, object_config.layer_height.value);
+    const double step_height     = (configured_step > 0.0)
+        ? std::max(0.01, configured_step)
+        : std::max(0.01, layer_h_auto);
+    // Fill coefficient: clamped to [0.25, 1.75] to match the PrintConfig min/max. Multiplier on
+    // the cylindrical-volume dE the emitter dispenses. 1.0 = neutral.
+    const double fill_coefficient = region_cfg
+        ? std::clamp(region_cfg->pylon_fill_coefficient.value, 0.25, 1.75)
+        : 1.0;
+    // Helix wall offset: distance the helix path stays away from the pylon wall. helix_radius
+    // = max(min_helix_radius, pylon_radius - wall_offset). Min keeps degenerate small pylons
+    // from collapsing the helix to a zero-length point that the previewer can't draw.
+    const double wall_offset      = region_cfg ? std::max(0.0, region_cfg->pylon_helix_wall_offset.value) : 0.4;
+    constexpr double min_helix_radius = 0.1;
+
+    // Skip-reasons log (item 4 surface). One entry per pylon-instance that was inspected but
+    // not scheduled. Snapshot file 07_pylon_status.txt reads this via pylon_skip_reasons().
+    m_pylon_skip_reasons.clear();
 
     for (const ModelVolume *mv : mo->volumes) {
         if (mv == nullptr || !mv->is_pylon())
             continue;
-
-        // Per-pylon settings — read from the ModelVolume's config, fall back to defaults if unset.
-        auto opt_int   = [&](const char *key, int def) {
-            const ConfigOption *o = mv->config.option(key);
-            return o ? static_cast<const ConfigOptionInt*>(o)->value : def;
-        };
-        auto opt_float = [&](const char *key, double def) {
-            const ConfigOption *o = mv->config.option(key);
-            return o ? static_cast<const ConfigOptionFloat*>(o)->value : def;
-        };
-        const int    period        = std::max(1, opt_int  ("pylon_injection_period",    20));
-        const int    dwell_ms      = std::max(0, opt_int  ("pylon_injection_dwell_ms", 2000));
-        const double descent_speed = std::max(1.0, opt_float("pylon_descent_speed",    300.0));
-        const double extrude_speed = std::max(1.0, opt_float("pylon_extrude_speed",     60.0));
-        const double step_height   = std::max(0.05, opt_float("pylon_step_height",       0.4));
-
-        // step-aligned event height: largest multiple of step_height not exceeding max_descent.
-        const double event_height = std::floor(max_descent / step_height) * step_height;
-        if (event_height < step_height) {
-            BOOST_LOG_TRIVIAL(warning) << "pylon-injection: event_height < step_height (max_descent=" << max_descent
-                                       << ", step_height=" << step_height << "); skipping pylon.";
-            continue;
-        }
 
         const BoundingBoxf3 local_bbox = mv->mesh().bounding_box();
 
@@ -964,8 +960,20 @@ void PrintObject::schedule_pylon_injections()
             const double radius = 0.5 * std::max(wb.size().x(), wb.size().y());
             const double pz_bot = wb.min.z();
             const double pz_top = wb.max.z();
-            if (radius <= 0.0 || pz_top <= pz_bot)
+
+            // Pretty-printer for the skip-reasons log. All entries are keyed by world-XY so
+            // the snapshot shows which pylon got dropped.
+            auto skip = [&](std::string reason) {
+                std::ostringstream s;
+                s << "@(" << cx << "," << cy << ") " << reason;
+                m_pylon_skip_reasons.push_back(s.str());
+            };
+
+            if (radius <= 0.0 || pz_top <= pz_bot) {
+                skip("degenerate world bbox (radius=" + std::to_string(radius)
+                     + ", z_extent=" + std::to_string(pz_top - pz_bot) + ")");
                 continue;
+            }
 
             // SUPPORT_ENFORCER overlap (XY rect + Z range).
             bool blocked_by_enforcer = false;
@@ -979,7 +987,7 @@ void PrintObject::schedule_pylon_injections()
             if (blocked_by_enforcer) {
                 BOOST_LOG_TRIVIAL(warning) << "pylon-injection: pylon at (" << cx << ", " << cy
                                            << ") overlaps a SUPPORT_ENFORCER volume — disabled.";
-                ++skipped_support;
+                skip("overlaps SUPPORT_ENFORCER volume");
                 continue;
             }
 
@@ -995,58 +1003,82 @@ void PrintObject::schedule_pylon_injections()
                 BOOST_LOG_TRIVIAL(warning) << "pylon-injection: pylon at (" << cx << ", " << cy
                                            << ") has no printed layer below z_bottom=" << pz_bot
                                            << " — disabled (no floor).";
-                ++skipped_floor;
+                skip("no printed layer below pz_bot=" + std::to_string(pz_bot)
+                     + " (pylon needs a floor to rest the helix on)");
                 continue;
             }
 
-            // Brick-bond 2-coloring stagger: odd-indexed pylons offset by half event height.
-            const double stagger_z = (pylon_index_for_stagger % 2 == 0) ? 0.0 : (event_height * 0.5);
-
-            // Generate event Z targets: pz_bot + event_height + N*event_height + stagger.
-            // After snap to layer print_z, enforce per-pylon `period` layer gap.
-            size_t last_emitted_layer = m_layers.size();  // sentinel
-            for (double target_top = pz_bot + event_height + stagger_z;
-                 target_top <= pz_top + 1e-6;
-                 target_top += event_height)
-            {
-                size_t snap_idx = first_layer_at_or_above_pz_bot;
-                while (snap_idx < m_layers.size() &&
-                       (m_layers[snap_idx] == nullptr || m_layers[snap_idx]->print_z < target_top))
-                    ++snap_idx;
-                if (snap_idx >= m_layers.size())
-                    break;
-
-                // Period rate-limit: enforce minimum layer gap between successive events for this pylon.
-                if (last_emitted_layer != m_layers.size() &&
-                    snap_idx - last_emitted_layer < (size_t)period)
-                    continue;
-
-                const Layer *L = m_layers[snap_idx];
-                const double z_top_snapped = L->print_z;
-                const double z_bot         = std::max(pz_bot, z_top_snapped - event_height);
-                if (z_top_snapped <= z_bot)
-                    continue;
-
-                PylonInjection::Event ev;
-                ev.pylon_id      = next_pylon_id;
-                ev.x             = cx;
-                ev.y             = cy;
-                ev.z_bottom      = z_bot;
-                ev.z_top         = z_top_snapped;
-                ev.radius        = radius;
-                ev.filament_id   = filament_id;
-                ev.dwell_ms      = dwell_ms;
-                ev.descent_speed = descent_speed;
-                ev.extrude_speed = extrude_speed;
-                ev.step_height   = step_height;
-                ev.dE            = (M_PI * radius * radius * (z_top_snapped - z_bot)) * e_per_mm3;
-
-                events_by_layer[snap_idx].push_back(std::move(ev));
-                last_emitted_layer = snap_idx;
+            // ONE event per pylon — fired at the layer corresponding to the pylon's top Z.
+            // No periodic scheduling, no staggering.
+            //
+            // Snap to the first layer whose print_z >= pz_top (the pylon's top in the slicer's frame).
+            size_t snap_idx = first_layer_at_or_above_pz_bot;
+            while (snap_idx < m_layers.size() &&
+                   (m_layers[snap_idx] == nullptr || m_layers[snap_idx]->print_z < pz_top))
+                ++snap_idx;
+            if (snap_idx >= m_layers.size()) {
+                BOOST_LOG_TRIVIAL(warning) << "pylon-injection: pylon at (" << cx << ", " << cy
+                                           << ") has no printed layer at or above pz_top=" << pz_top
+                                           << " — disabled (pylon top above the print).";
+                skip("pylon top (z=" + std::to_string(pz_top) + ") is above the topmost printed layer");
+                continue;
             }
 
+            const Layer *L = m_layers[snap_idx];
+            const double z_top_snapped = L->print_z;
+
+            // (A) Event height: configured pylon_injection_height takes precedence; auto (0)
+            // = fill the entire pylon void from snapped top down to pylon bottom. Always capped
+            // by pylon_max_descent_depth as the safety ceiling — if the cap kicks in, only the
+            // top portion gets filled. Using z_top_snapped (not pz_top) for the auto extent so
+            // the bottom of the helix lands exactly at pz_bot, not one layer above. No step-
+            // height alignment — the emit loop in GCode.cpp handles a sub-step final segment.
+            const double configured_height = object_config.pylon_injection_height.value;
+            const double desired_height    = (configured_height > 0.0) ? configured_height : (z_top_snapped - pz_bot);
+            const double event_height      = std::min(desired_height, max_descent);
+            if (event_height < 1e-6) {
+                BOOST_LOG_TRIVIAL(warning) << "pylon-injection: degenerate event_height "
+                                           << event_height << " (desired=" << desired_height
+                                           << ", max_descent=" << max_descent << "); skipping pylon.";
+                skip("degenerate event_height=" + std::to_string(event_height)
+                     + " (desired=" + std::to_string(desired_height)
+                     + ", capped by max_descent=" + std::to_string(max_descent) + ")");
+                continue;
+            }
+            const double z_bot = std::max(pz_bot, z_top_snapped - event_height);
+            if (z_top_snapped <= z_bot) {
+                BOOST_LOG_TRIVIAL(warning) << "pylon-injection: degenerate Z range at pylon (" << cx << "," << cy
+                                           << ") z_top=" << z_top_snapped << " z_bot=" << z_bot << " — skipped.";
+                skip("degenerate Z range z_top=" + std::to_string(z_top_snapped)
+                     + " <= z_bot=" + std::to_string(z_bot));
+                continue;
+            }
+
+            PylonInjection::Event ev;
+            ev.pylon_id      = next_pylon_id;
+            ev.x             = cx;
+            ev.y             = cy;
+            ev.z_bottom      = z_bot;
+            ev.z_top         = z_top_snapped;
+            ev.radius        = radius;
+            ev.filament_id   = filament_id;
+            ev.dwell_ms      = dwell_ms;
+            ev.descent_speed = descent_speed;
+            ev.extrude_speed = extrude_speed;
+            ev.step_height   = step_height;
+            // Helix radius = pylon radius minus wall offset, clamped to min_helix_radius so the
+            // helix never collapses to a point. The emitter spirals at this radius around (x, y).
+            ev.helix_radius  = std::max(min_helix_radius, radius - wall_offset);
+            // dE = (cylindrical volume of injection region) × e_per_mm3, scaled by the user's
+            // fill coefficient. Movement is slow; per-segment extrusion is huge; nozzle squeezes
+            // the void full. Like injection moulding.
+            ev.dE            = fill_coefficient
+                             * (M_PI * radius * radius * (z_top_snapped - z_bot))
+                             * e_per_mm3;
+
+            events_by_layer[snap_idx].push_back(std::move(ev));
+
             ++next_pylon_id;
-            ++pylon_index_for_stagger;
         }
     }
 
@@ -1061,18 +1093,17 @@ void PrintObject::schedule_pylon_injections()
                        [](const CustomGCode::Item &it) { return it.type == CustomGCode::PylonInject; }),
         info.gcodes.end());
 
-    int total_events = 0;
+    // ALSO clear the slicer-owned cache so we don't double-emit stale events from a prior slice.
+    m_pylon_items.clear();
+
     for (auto &kv : events_by_layer) {
-        info.gcodes.push_back(PylonInjection::to_item_batch(kv.second));
-        total_events += int(kv.second.size());
+        CustomGCode::Item it = PylonInjection::to_item_batch(kv.second);
+        info.gcodes.push_back(it);
+        // Mirror into the apply-immune slicer cache.
+        m_pylon_items.push_back(std::move(it));
     }
     std::sort(info.gcodes.begin(), info.gcodes.end());
-
-    BOOST_LOG_TRIVIAL(info) << "pylon-injection: scheduled " << total_events << " event(s) across "
-                            << events_by_layer.size() << " layer(s) for " << next_pylon_id
-                            << " pylon instance(s); skipped " << skipped_support
-                            << " for SUPPORT_ENFORCER overlap, " << skipped_floor
-                            << " for floor safety.";
+    std::sort(m_pylon_items.begin(), m_pylon_items.end());
 }
 
 void PrintObject::contour_z()

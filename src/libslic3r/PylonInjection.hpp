@@ -34,6 +34,9 @@ struct Event
     double   descent_speed{0.0};  // mm/min for the dry travel down
     double   extrude_speed{0.0};  // mm/min for the ascending extrude segments
     double   step_height  {0.0};  // delta Z per ascending extrude segment (mm)
+    double   helix_radius {0.0};  // XY radius of the helix path inside the void (mm).
+                                  // Distinct from `radius` (the pylon's void radius). Scheduler
+                                  // computes this as max(min_helix_radius, radius - pylon_helix_wall_offset).
 
     // Sanity check used by the emitter (Task 8).
     bool is_valid() const;

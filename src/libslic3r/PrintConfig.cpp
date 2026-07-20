@@ -4269,9 +4269,39 @@ void PrintConfigDef::init_fff_params()
     def->label    = L("Ascending step height");
     def->category = L("Pylon");
     def->tooltip  = L("Vertical step size for each ascending extrude segment during an injection event. "
-                      "Smaller steps give finer control; larger steps reduce G-code volume.");
+                      "Smaller steps give a smoother helix; larger steps produce chunkier toolpaths. "
+                      "0 (Default) = auto, uses the print's layer height so each helix segment matches "
+                      "one printed layer.");
     def->sidetext = L("mm");
-    def->min      = 0.05;
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0));
+
+    def = this->add("pylon_fill_coefficient", coFloat);
+    def->label    = L("Fill coefficient");
+    def->category = L("Pylon");
+    def->tooltip  = L("Multiplier on the calculated injection volume. 1.0 = deposit exactly the "
+                      "cylindrical volume of the injection region. Values below 1 underfill "
+                      "(useful when the surrounding sparse infill bleeds material back into the "
+                      "void); values above 1 overfill (forces extra material outward when the "
+                      "helix can't reach the wall directly). Clamped to 0.25–1.75 to keep extrusion "
+                      "rates in a sane range.");
+    def->min      = 0.25;
+    def->max      = 1.75;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1.0));
+
+    def = this->add("pylon_helix_wall_offset", coFloat);
+    def->label    = L("Helix wall offset");
+    def->category = L("Pylon");
+    def->tooltip  = L("Distance the helix path stays away from the pylon wall, in mm. The helix "
+                      "radius equals (pylon radius − this offset). 0 = helix rides the wall (rough "
+                      "spiral that can chatter on small pylons). Larger = helix stays inside, the "
+                      "bead flows outward under nozzle pressure to fill the gap. Clamped so the "
+                      "helix radius is never less than 0.1 mm.");
+    def->sidetext = L("mm");
+    def->min      = 0;
+    def->max      = 5;
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.4));
 
@@ -4291,8 +4321,22 @@ void PrintConfigDef::init_fff_params()
     def->category = L("Pylon");
     def->tooltip  = L("Maximum vertical distance the nozzle is allowed to descend below the current "
                       "top print Z to reach a pylon's fill window. "
-                      "0 (Default) disables pylon injection — safe failure mode for unconfigured prints. "
-                      "Set to the measured nozzle clearance for your printer minus a safety margin.");
+                      "Set to the measured nozzle clearance for your printer minus a safety margin. "
+                      "Set 0 to disable pylon injection entirely.");
+    def->sidetext = L("mm");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(8));
+
+    def = this->add("pylon_injection_height", coFloat);
+    def->label    = L("Injection height");
+    def->category = L("Pylon");
+    def->tooltip  = L("Vertical span of each pylon injection helix, in mm. The nozzle descends "
+                      "this far below the current top print Z, then extrudes back up to the top "
+                      "in a tight helix. 0 (Default) = fill the entire pylon void from the "
+                      "pylon's top down to its bottom. The result is always capped by Max "
+                      "descent depth as a safety ceiling — if your pylon is taller than that "
+                      "cap, only the top portion gets filled.");
     def->sidetext = L("mm");
     def->min      = 0;
     def->mode     = comAdvanced;

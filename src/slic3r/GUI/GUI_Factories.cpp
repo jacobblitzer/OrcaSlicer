@@ -710,24 +710,48 @@ void MenuFactory::append_menu_items_add_volume(wxMenu* menu)
     }
 
     // Orca: pylon injection — quick "Add Pylon (cylinder)" entry. V1 creates a
-    // default cylinder primitive, marks it NEGATIVE_VOLUME, and flips pylon_enabled
-    // on the new volume's config. Pylon-specific PrintRegionConfig overrides
-    // (period, dwell, speeds, step) surface in the existing modifier-volume
-    // settings panel because they're regular PrintRegionConfig keys.
+    // default cylinder primitive, marks it NEGATIVE_VOLUME, flips pylon_enabled
+    // on the new volume's config, renames it "Pylon" so the sidebar is clear,
+    // and re-centers the cylinder inside the parent so it actually intersects
+    // the object's geometry (load_generic_subobject's default places primitives
+    // at the +X corner, which leaves zero per-layer footprint overlap).
     append_menu_item(menu, wxID_ANY, _L("Add Pylon (cylinder)"), "",
         [](wxCommandEvent&) {
-            obj_list()->load_generic_subobject(L("Cylinder"), ModelVolumeType::NEGATIVE_VOLUME);
+            obj_list()->load_generic_subobject(L("Cylinder"), ModelVolumeType::PYLON_VOID);
+
             const int obj_idx = obj_list()->get_selected_obj_idx();
             auto *objs = obj_list()->objects();
             if (obj_idx < 0 || objs == nullptr || obj_idx >= int(objs->size()))
                 return;
             ModelObject *mo = (*objs)[obj_idx];
-            if (mo == nullptr || mo->volumes.empty())
+            if (mo == nullptr || mo->volumes.empty() || mo->instances.empty())
                 return;
             ModelVolume *mv = mo->volumes.back();
-            if (mv == nullptr || !mv->is_negative_volume())
+            if (mv == nullptr || !mv->is_pylon())
                 return;
-            mv->config.set("pylon_enabled", true);
+
+            mv->name = "Pylon";
+            const ModelInstance *mi = mo->instances.front();
+            const BoundingBoxf3 instance_bb = mo->instance_bounding_box(0);
+            const Vec3d offset_world = instance_bb.center() - mi->get_offset();
+            mv->set_offset(mi->get_transformation().get_matrix_no_offset().inverse() * offset_world);
+
+            // Pylons-just-work UX: if neither the ModelObject nor the active print preset has
+            // a usable pylon_max_descent_depth (effective value <= 0), set an 8mm override on
+            // this object. Without this, fresh user sessions get pylon_max_descent_depth=0
+            // (the legacy "safe failure mode" default) and the scheduler bails silently —
+            // the user keeps re-discovering that pylons "don't work" without manual config.
+            if (mo->config.option("pylon_max_descent_depth") == nullptr) {
+                const auto &preset_cfg = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+                const double preset_val = preset_cfg.opt_float("pylon_max_descent_depth");
+                if (preset_val <= 0.0)
+                    mo->config.set_key_value("pylon_max_descent_depth", new ConfigOptionFloat(8.0));
+            }
+
+            // Push the renamed volume into the ObjectList tree — load_generic_subobject set
+            // node->m_name = "Generic-Cylinder" before we got control, and the tree caches that.
+            wxGetApp().obj_list()->update_name_for_items();
+            wxGetApp().plater()->update();
         },
         "menu_obj_cylinder", menu,
         []() { return obj_list()->is_instance_or_object_selected(); }, m_parent);
@@ -832,7 +856,8 @@ wxMenuItem* MenuFactory::append_menu_item_change_type(wxMenu* menu)
         { ModelVolumeType::NEGATIVE_VOLUME,    _L("Negative Part") },
         { ModelVolumeType::PARAMETER_MODIFIER, _L("Modifier") },
         { ModelVolumeType::SUPPORT_BLOCKER,    _L("Support Blocker") },
-        { ModelVolumeType::SUPPORT_ENFORCER,   _L("Support Enforcer") }
+        { ModelVolumeType::SUPPORT_ENFORCER,   _L("Support Enforcer") },
+        { ModelVolumeType::PYLON_VOID,         _L("Pylon") }  // Orca
     };
 
     for (const auto& info : types) {

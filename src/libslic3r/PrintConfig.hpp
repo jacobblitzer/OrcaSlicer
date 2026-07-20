@@ -1049,6 +1049,12 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt,  interlocking_depth))
     ((ConfigOptionInt,  interlocking_boundary_avoidance))
 
+    // Orca: pylon injection — global (per-print-process) keys live here so they surface on
+    // TabPrint (the process preset tab) alongside per-region pylon keys.
+    ((ConfigOptionInt,                 pylon_injection_filament))
+    ((ConfigOptionFloat,               pylon_max_descent_depth))
+    ((ConfigOptionFloat,               pylon_injection_height))
+
     // Orca: internal use only
     ((ConfigOptionBool,  calib_flowrate_topinfill_special_order)) // ORCA: special flag for flow rate calibration
 )
@@ -1232,6 +1238,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat, pylon_descent_speed))
     ((ConfigOptionFloat, pylon_extrude_speed))
     ((ConfigOptionFloat, pylon_step_height))
+    ((ConfigOptionFloat, pylon_fill_coefficient))
+    ((ConfigOptionFloat, pylon_helix_wall_offset))
     )
 
 PRINT_CONFIG_CLASS_DEFINE(
@@ -1624,9 +1632,6 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionPoint,               bed_mesh_probe_distance))
     ((ConfigOptionFloat,               adaptive_bed_mesh_margin))
 
-    // Orca: Pylon Injection (global / per-print)
-    ((ConfigOptionInt,                 pylon_injection_filament))
-    ((ConfigOptionFloat,               pylon_max_descent_depth))
 
 )
 

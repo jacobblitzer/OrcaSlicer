@@ -317,7 +317,11 @@ private:
         void close();
 
         // Write a string into a file.
-        void write(const std::string& what) { this->write(what.c_str()); }
+        // Orca: the std::string overload no longer goes through write(c_str()) because
+        // fwrite uses strlen() on the C string and silently truncates at the first
+        // embedded NUL — that masked the pylon-injection markers in the file. Pass
+        // size() explicitly so embedded NULs (or any binary content) are preserved.
+        void write(const std::string& what);
         void write(const char* what);
 
         // Write a string into a file.

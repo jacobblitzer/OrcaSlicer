@@ -32,6 +32,7 @@ std::string to_json(const Event &e)
     j["descent_speed"] = e.descent_speed;
     j["extrude_speed"] = e.extrude_speed;
     j["step_height"]   = e.step_height;
+    j["helix_radius"]  = e.helix_radius;
     return j.dump();
 }
 
@@ -52,6 +53,8 @@ Event from_json(const std::string &s)
         j.at("descent_speed").get_to(e.descent_speed);
         j.at("extrude_speed").get_to(e.extrude_speed);
         j.at("step_height"  ).get_to(e.step_height);
+        // helix_radius is post-V1 — older snapshots may not carry it. Tolerate absence.
+        if (j.contains("helix_radius")) j.at("helix_radius").get_to(e.helix_radius);
     } catch (const nlohmann::json::exception &) {
         e.pylon_id = -1;  // signal parse failure
     }
@@ -94,6 +97,7 @@ static nlohmann::json event_to_json_object(const Event &e)
     j["descent_speed"] = e.descent_speed;
     j["extrude_speed"] = e.extrude_speed;
     j["step_height"]   = e.step_height;
+    j["helix_radius"]  = e.helix_radius;
     return j;
 }
 
@@ -113,6 +117,8 @@ static Event event_from_json_object(const nlohmann::json &j)
         j.at("descent_speed").get_to(e.descent_speed);
         j.at("extrude_speed").get_to(e.extrude_speed);
         j.at("step_height"  ).get_to(e.step_height);
+        // helix_radius is post-V1 — older snapshots may not carry it. Tolerate absence.
+        if (j.contains("helix_radius")) j.at("helix_radius").get_to(e.helix_radius);
     } catch (const nlohmann::json::exception &) {
         e.pylon_id = -1;
     }
