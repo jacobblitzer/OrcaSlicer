@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(cmake --build:*)",
+      "Bash(gh repo view:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(gh api:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl:*)",
+      "Bash(gh search:*)",
+      "Bash(git clone:*)",
+      "Bash(where:*)",
+      "Bash(cmake:*)",
+      "Bash(\"C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" --version)",
+      "Bash(\"C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" --build . --config Release --target ALL_BUILD -- -m)",
+      "Bash(start:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd Z Contouring \\(ZAA\\) feature for smoother top surfaces\n\nDynamically adjusts Z heights within layers to follow actual model\nsurface geometry, reducing visible stair-stepping on top surfaces\nwithout requiring smaller layer heights. Uses ray-casting against\nthe model mesh via IndexedMesh AABB tree.\n\nNew settings: zaa_enabled, zaa_min_z, zaa_minimize_perimeter_height,\nzaa_region_disable, zaa_dont_alternate_fill_direction.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(git remote add:*)",
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)",
+      "Bash(git checkout:*)",
+      "Bash(dir:*)",
+      "Bash(\"C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe\" C:/Repos/orcaslicer/build/OrcaSlicer.sln /t:Build /p:Configuration=Release /m /nologo)",
+      "Bash(\"C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe\" OrcaSlicer.sln -t:Build -p:Configuration=Release -m -nologo)",
+      "Bash(powershell:*)",
+      "Bash(\"/c/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe\" \"C:/Repos/orcaslicer/build/OrcaSlicer.sln\" -t:Build -p:Configuration=Release -m -nologo)",
+      "PowerShell(git fetch upstream --prune)",
+      "PowerShell(\"main vs upstream/main \\(ahead behind\\):\"; git rev-list --left-right --count main...upstream/main; \"custom-infill vs upstream/main:\"; git rev-list --left-right --count feature/custom-infill...upstream/main; \"pylon-injection vs upstream/main:\"; git rev-list --left-right --count origin/feature/pylon-injection...upstream/main; \"custom-infill vs main:\"; git rev-list --left-right --count feature/custom-infill...main; \"pylon vs custom-infill:\"; git rev-list --left-right --count origin/feature/pylon-injection...feature/custom-infill; \"merge-base dates:\"; git log -1 --format=\"%h %ci %s\" \\(git merge-base main upstream/main\\); git log -1 --format=\"%h %ci %s\" upstream/main)",
+      "PowerShell(git merge-tree --write-tree --name-only --no-messages feature/custom-infill upstream/main | Select-Object -Skip 1 | Select-Object -First 60; \"exit: $LASTEXITCODE\")",
+      "PowerShell(git merge-tree --write-tree --name-only main upstream/main | Select-String -Pattern \"^CONFLICT|^Auto-merging\" | Where-Object { $_ -match \"CONFLICT\" })",
+      "PowerShell(git log --oneline -i -E --grep=\"zaa|z contour|z-contour|anti-alias|per-feature filament|feature filament\" 08463f02c4..upstream/main)",
+      "PowerShell(git merge-tree --write-tree --name-only --no-messages origin/feature/pylon-injection upstream/main | Select-Object -Skip 1; \"exit: $LASTEXITCODE\")",
+      "PowerShell(\"=== main: zaa / per-feature keys in PrintConfig.hpp ===\"; git show main:src/libslic3r/PrintConfig.hpp | Select-String -Pattern \"zaa|contour|_filament\\\\b|wall_filament|surface_filament|feature_filament\" | ForEach-Object { $_.Line.Trim\\(\\) }; \"=== upstream: same ===\"; git show upstream/main:src/libslic3r/PrintConfig.hpp | Select-String -Pattern \"zaa|contour|_filament\\\\b|wall_filament|surface_filament|feature_filament\" | ForEach-Object { $_.Line.Trim\\(\\) })",
+      "PowerShell(git -c diff.renameLimit=0 diff --dirstat=files,3 08463f02c4 upstream/main)",
+      "PowerShell(\"pylon contains upstream ZAA \\(0f366ddff1\\)?\"; git merge-base --is-ancestor 0f366ddff1 origin/feature/pylon-injection; $LASTEXITCODE; \"pylon contains upstream divided-filament \\(ea35b9ce68\\)?\"; git merge-base --is-ancestor ea35b9ce68 origin/feature/pylon-injection; $LASTEXITCODE; \"pylon base:\"; git log -1 --format=\"%h %ci %s\" \\(git merge-base origin/feature/pylon-injection upstream/main\\); \"pylon tip:\"; git log -1 --format=\"%h %ci %s\" origin/feature/pylon-injection; \"custom-infill tip date:\"; git log -1 --format=\"%h %ci\" feature/custom-infill)",
+      "PowerShell(\"=== pylon PrintConfig.hpp zaa/filament keys ===\"; git show origin/feature/pylon-injection:src/libslic3r/PrintConfig.hpp | Select-String -Pattern \"zaa_|_filament\\(_id\\)?\\\\\\)\\\\\\)\" | ForEach-Object { $_.Line.Trim\\(\\) }; \"=== pylon ContourZ.cpp identical to upstream-at-its-base? ===\"; git diff --stat \\(git merge-base origin/feature/pylon-injection upstream/main\\) origin/feature/pylon-injection -- src/libslic3r/ContourZ.cpp src/libslic3r/ContourZ.hpp)",
+      "PowerShell(git show upstream/main:src/libslic3r/PrintConfig.cpp | Select-String -Pattern '\"\\(wall|outer_wall|solid_infill|top_surface|bottom_surface|sparse_infill|inner_wall\\)_filament\\(_id\\)?\"' | Select-Object -First 25 | ForEach-Object { \"$\\($_.LineNumber\\): $\\($_.Line.Trim\\(\\)\\)\" })"
+    ]
+  }
+}
