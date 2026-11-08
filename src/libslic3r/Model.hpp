@@ -367,6 +367,11 @@ enum class ModelVolumeType : int {
     PRECISE_SEAM_ENFORCED,
     PRECISE_SEAM_BLOCKED,
     PRECISE_SEAM_NEUTRAL,
+    // Orca: pylon injection. Carves the parent like NEGATIVE_VOLUME and additionally
+    // schedules bottom-up injection events at print time. Distinct type so the sidebar,
+    // 3MF, and slicer pipeline can treat it as a first-class concept rather than a flagged
+    // negative volume.
+    PYLON_VOID,
 };
 
 // Free functions for checking ModelVolumeType without a ModelVolume object.
@@ -1046,6 +1051,17 @@ public:
 	// Helper to check if volume is a "weak" Precise Seam type (enforced, blocked, neutral)
 	// Weak modifiers always appear below strong modifiers in UI
 	bool                is_precise_seam_weak()   const { return Slic3r::is_precise_seam_weak(m_type); }
+    // Orca: pylon = a first-class void volume scheduled for bottom-up injection.
+    // Accepts both the V2 type (PYLON_VOID) and the legacy V1 marker (NEGATIVE_VOLUME with
+    // pylon_enabled=true on the volume's config) so previously-saved projects keep working.
+    bool                is_pylon()              const {
+        if (m_type == ModelVolumeType::PYLON_VOID) return true;
+        if (m_type != ModelVolumeType::NEGATIVE_VOLUME) return false;
+        const ConfigOption *opt = this->config.option("pylon_enabled");
+        return opt != nullptr && static_cast<const ConfigOptionBool*>(opt)->value;
+    }
+    // Convenience: anything that carves the parent at slice time (negative or pylon).
+    bool                is_carving_volume()     const { return m_type == ModelVolumeType::NEGATIVE_VOLUME || m_type == ModelVolumeType::PYLON_VOID; }
     bool                is_text()               const { return text_configuration.has_value(); }
     bool                is_svg() const { return emboss_shape.has_value()  && !text_configuration.has_value(); }
     bool                is_the_only_one_part() const; // behave like an object

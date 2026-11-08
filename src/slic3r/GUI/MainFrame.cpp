@@ -98,6 +98,7 @@
 #include "slic3r/GUI/CAD/DesignPanel.hpp"
 #include "slic3r/GUI/CAD/McpControl.hpp"
 #endif
+#include "PylonDebugSnapshot.hpp"
 #include "WebViewDialog.hpp"
 #include "../Utils/Process.hpp"
 // BBS
@@ -2940,6 +2941,10 @@ wxMenu* MainFrame::generate_help_menu()
             [](wxCommandEvent&) { run_scene_benchmark(); });
 
     helpMenu->AppendSeparator();
+    // Orca: pylon-injection debug snapshot
+    append_menu_item(helpMenu, wxID_ANY, _L("Export Pylon Debug Snapshot..."),
+        _L("Capture the current model, configs, custom gcodes, and recent log to a folder for triage."),
+        [](wxCommandEvent&) { Slic3r::GUI::export_pylon_debug_snapshot(wxGetApp().mainframe); });
 
     append_menu_item(helpMenu, wxID_ANY, _L("Show Tip of the Day"), _L("Show Tip of the Day"), [](wxCommandEvent&) {
         wxGetApp().plater()->get_dailytips()->open();

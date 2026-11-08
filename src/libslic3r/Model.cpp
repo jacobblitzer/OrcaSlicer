@@ -2971,6 +2971,9 @@ ModelVolumeType ModelVolume::type_from_string(const std::string &s)
 		return ModelVolumeType::PRECISE_SEAM_BLOCKED;
     if (s == "precise_seam_neutral")
 		return ModelVolumeType::PRECISE_SEAM_NEUTRAL;
+    // Orca: pylon injection.
+    if (s == "pylon_void")
+        return ModelVolumeType::PYLON_VOID;
     //assert(s == "0");
     // Default value if invalud type string received.
 	return ModelVolumeType::MODEL_PART;
@@ -2991,6 +2994,7 @@ std::string ModelVolume::type_to_string(const ModelVolumeType t)
 	case ModelVolumeType::PRECISE_SEAM_ENFORCED: return "precise_seam_enforced";
 	case ModelVolumeType::PRECISE_SEAM_BLOCKED:  return "precise_seam_blocked";
 	case ModelVolumeType::PRECISE_SEAM_NEUTRAL:  return "precise_seam_neutral";
+	case ModelVolumeType::PYLON_VOID:         return "pylon_void";  // Orca
     default:
         assert(false);
         return "normal_part";

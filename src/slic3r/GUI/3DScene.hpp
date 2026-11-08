@@ -98,6 +98,7 @@ public:
     static ColorRGBA MODEL_NEGTIVE_COL;
     static ColorRGBA SUPPORT_ENFORCER_COL;
     static ColorRGBA SUPPORT_BLOCKER_COL;
+    static ColorRGBA PYLON_VOID_COL;       // Orca: pylon-injection — translucent purple
     static ColorRGBA MODEL_HIDDEN_COL;
     // Precise Seam modifier colors
     static ColorRGBA PRECISE_SEAM_CENTER_COL;

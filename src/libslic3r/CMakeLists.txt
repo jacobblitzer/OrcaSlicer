@@ -439,6 +439,8 @@ set(lisbslic3r_sources
     PrintObject.cpp
     PrintObjectSlice.cpp
     PrintRegion.cpp
+    PylonInjection.cpp
+    PylonInjection.hpp
     ProjectTask.cpp
     ProjectTask.hpp
     QuadricEdgeCollapse.cpp

@@ -19,6 +19,7 @@ void Item::from_json(const nlohmann::json& j) {
         {"ToolChange",ToolChange},
         {"Template",Template},
         {"Custom",Custom},
+        {"PylonInject",PylonInject},
         {"Unknown",Unknown} };
     type = Unknown;
     if (str2type.find(type_str) != str2type.end())

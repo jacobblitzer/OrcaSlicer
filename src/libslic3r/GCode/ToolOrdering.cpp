@@ -189,6 +189,20 @@ static unsigned int region_filament(const ExtrusionEntityCollection &extrusions,
         config.inner_wall_filament_id.value : config.outer_wall_filament_id.value;
 }
 
+// Orca: pylon injection — per-print-process filament for all pylon events.
+// V1: a single dedicated reinforcement filament for the whole print, configured via
+// pylon_injection_filament (PrintObjectConfig). Falls back to the region's internal solid
+// infill filament when 0, and like the accessors above resolves a mixed slot to the
+// physical filament chosen for this layer.
+unsigned int LayerTools::pylon_filament(const PrintObjectConfig &object_config, const PrintRegion &region) const
+{
+	const int v = object_config.pylon_injection_filament.value;
+	if (v == 0)
+		return this->internal_solid_filament_id(region);
+	unsigned int result = ((this->extruder_override == 0) ? v : this->extruder_override) - 1;
+	return resolve_mixed(result);
+}
+
 // Returns a zero based extruder this eec should be printed with, according to PrintRegion config or extruder_override if overriden.
 unsigned int LayerTools::extruder(const ExtrusionEntityCollection &extrusions, const PrintRegion &region) const
 {

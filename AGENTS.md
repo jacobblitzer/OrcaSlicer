@@ -17,6 +17,24 @@ cmake --build build --config Release --target all --
 cmake --build . --config Release --target ALL_BUILD -- -m
 ```
 
+### Post-build: Desktop shortcut (Windows)
+
+After every successful Windows build, create/replace a desktop shortcut named `devorcaslicer` pointing at the freshly built `orca-slicer.exe`. Overwrite any existing shortcut so the link always reflects the latest build.
+
+- Target: `C:\Repos\OrcaSlicer\OrcaSlicer\build\src\%build_type%\orca-slicer.exe` (use the same `%build_type%` as the build, e.g. `RelWithDebInfo` or `Release`)
+- Working directory: same folder as the target
+- Shortcut path: `$env:USERPROFILE\Desktop\devorcaslicer.lnk`
+
+PowerShell one-liner:
+
+```powershell
+$bt = 'RelWithDebInfo'  # match build config
+$lnk = "$env:USERPROFILE\Desktop\devorcaslicer.lnk"
+$tgt = "C:\Repos\OrcaSlicer\OrcaSlicer\build\src\$bt\orca-slicer.exe"
+$s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+$s.TargetPath = $tgt; $s.WorkingDirectory = (Split-Path $tgt); $s.Save()
+```
+
 ## Testing
 
 Catch2 framework. Tests in `tests/`; see [tests/AGENTS.md](tests/AGENTS.md) for where a new test belongs and the conventions to follow.

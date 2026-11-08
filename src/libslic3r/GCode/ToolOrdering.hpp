@@ -165,6 +165,8 @@ public:
     unsigned int wall_extruder_id(const PrintRegion &region) const;
     unsigned int sparse_infill_filament_id(const PrintRegion &region) const;
     unsigned int internal_solid_filament_id(const PrintRegion &region) const;
+    // Orca: pylon injection - resolves pylon_injection_filament (0 -> internal solid).
+    unsigned int pylon_filament(const PrintObjectConfig &object_config, const PrintRegion &region) const;
 	// Returns a zero based extruder this eec should be printed with, according to PrintRegion config or extruder_override if overriden.
 	unsigned int extruder(const ExtrusionEntityCollection &extrusions, const PrintRegion &region) const;
 

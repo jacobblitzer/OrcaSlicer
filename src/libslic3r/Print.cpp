@@ -3657,6 +3657,16 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
             }
         }
 
+        // Orca: pylon injection — must run after infill (footprints cache populated)
+        // and before support material so pylons can be informed by surrounding geometry.
+        for (PrintObject *obj : m_objects) {
+            if (need_slicing_objects.count(obj) != 0) {
+                obj->schedule_pylon_injections();
+            } else {
+                if (obj->set_started(posSchedulePylonInjection))
+                    obj->set_done(posSchedulePylonInjection);
+            }
+        }
         // SlicingPipeline: support runs in the parallel block below; the hook must fire in a
         // sequential loop afterward. Snapshot per-object done-state just before the parallel_for.
         std::vector<char> sup_was_done(m_objects.size(), 1);
@@ -3717,6 +3727,8 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
                     obj->set_done(posIroning);
                 if (obj->set_started(posContouring))
                     obj->set_done(posContouring);
+                if (obj->set_started(posSchedulePylonInjection))
+                    obj->set_done(posSchedulePylonInjection);
                 if (obj->set_started(posSupportMaterial))
                     obj->set_done(posSupportMaterial);
                 if (obj->set_started(posDetectOverhangsForLift))
@@ -3726,6 +3738,7 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
                 obj->make_perimeters();
                 obj->infill();
                 obj->ironing();
+                obj->schedule_pylon_injections();
                 obj->generate_support_material();
                 obj->detect_overhangs_for_lift();
                 obj->estimate_curled_extrusions();
@@ -3741,7 +3754,31 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
         }
     }
 
-
+    // Orca: pylon injection — restore the slicer-owned cache into m_model.plates_custom_gcodes.
+    // PrintApply.cpp:1316 overwrites m_model.plates_custom_gcodes[curr_plate] with the SOURCE
+    // model's version on every apply() — wiping our PylonInject items even when the scheduler
+    // already produced valid events from a prior slice. We restore them here by direct vector
+    // manipulation (NO invalidate_step / NO state-machine cascade — those cascade to psWipeTower
+    // and psGCodeExport, causing the GUI to detect "needs reslice" in a tight loop and freeze
+    // the Preview tab).
+    {
+        auto &info = m_model.plates_custom_gcodes[m_model.curr_plate_index];
+        // First strip any stale PylonInject items currently present (apply may have left some).
+        info.gcodes.erase(
+            std::remove_if(info.gcodes.begin(), info.gcodes.end(),
+                           [](const CustomGCode::Item &it) { return it.type == CustomGCode::PylonInject; }),
+            info.gcodes.end());
+        // Then re-insert from every PrintObject's apply-immune cache.
+        bool added_any = false;
+        for (const PrintObject *obj : m_objects) {
+            for (const CustomGCode::Item &it : obj->pylon_items()) {
+                info.gcodes.push_back(it);
+                added_any = true;
+            }
+        }
+        if (added_any)
+            std::sort(info.gcodes.begin(), info.gcodes.end());
+    }
 
     if (this->set_started(psWipeTower)) {
         {
