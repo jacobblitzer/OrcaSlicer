@@ -140,9 +140,22 @@ unsigned int LayerTools::internal_solid_filament_id(const PrintRegion &region) c
 	return resolve_mixed(result);
 }
 
+// Orca: a wall loop reports only its first path's role, so a loop of mixed paths needs a full
+// scan before every one of its paths can be called an overhang.
+static bool is_all_overhang(const ExtrusionEntity &entity)
+{
+    if (const auto *loop = dynamic_cast<const ExtrusionLoop *>(&entity))
+        return !loop->paths.empty() && std::all_of(loop->paths.begin(), loop->paths.end(),
+                                                  [](const ExtrusionPath &p) { return p.role() == erOverhangPerimeter; });
+    return entity.role() == erOverhangPerimeter;
+}
+
 // 1 based filament of an island's extrusions; the tool ordering and the G-code export must agree on it.
 static unsigned int region_filament(const ExtrusionEntityCollection &extrusions, const PrintRegionConfig &config)
 {
+    // Orca: a dedicated gap fill filament, where set, wins over the surface it fills.
+    if (config.gap_fill_filament.value > 0 && extrusions.role() == erGapFill)
+        return config.gap_fill_filament.value;
     if (extrusions.has_infill()) {
         if (!extrusions.has_solid_infill())
             return config.sparse_infill_filament_id.value;
@@ -151,6 +164,13 @@ static unsigned int region_filament(const ExtrusionEntityCollection &extrusions,
         for (const ExtrusionEntity *ee : extrusions.entities)
             if (const ExtrusionRole er = ee->role(); er != erGapFill)
                 role = (role == erNone || role == er) ? er : erMixed;
+        // Orca: per-feature overrides. 0 falls through to the defaults below.
+        if (role == erInternalBridgeInfill && config.internal_bridge_filament.value > 0)
+            return config.internal_bridge_filament.value;
+        if ((role == erBridgeInfill || role == erInternalBridgeInfill) && config.bridge_filament.value > 0)
+            return config.bridge_filament.value;
+        if (role == erIroning && config.ironing_filament.value > 0)
+            return config.ironing_filament.value;
         if (role == erTopSolidInfill || role == erIroning)
             return config.top_surface_filament_id.value;
         if (role == erBottomSurface)
@@ -161,6 +181,10 @@ static unsigned int region_filament(const ExtrusionEntityCollection &extrusions,
     if (extrusions.role() == erGapFill)
         return config.wall_loops.value > 1 ? config.inner_wall_filament_id.value : config.outer_wall_filament_id.value;
     const ExtrusionEntitiesPtr &walls = extrusions.entities;
+    // Orca: a loop that overhangs all the way round takes the overhang filament, where set.
+    if (config.overhang_wall_filament.value > 0 && !walls.empty() &&
+        std::all_of(walls.begin(), walls.end(), [](const ExtrusionEntity *ee) { return is_all_overhang(*ee); }))
+        return config.overhang_wall_filament.value;
     return !walls.empty() && std::all_of(walls.begin(), walls.end(), [](const ExtrusionEntity *ee) { return is_inner_wall(*ee); }) ?
         config.inner_wall_filament_id.value : config.outer_wall_filament_id.value;
 }
@@ -872,6 +896,26 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                     });
                     if (extruder_override == 0 && region.config().wall_loops.value > 1 && has_inner_wall)
                         layer_tools.extruders.emplace_back(region.config().inner_wall_filament_id.value);
+                    // Orca: a per-feature wall filament needs its own tool change planned for,
+                    // or the layer would be printed without ever selecting it.
+                    if (extruder_override == 0) {
+                        if (region.config().overhang_wall_filament.value > 0) {
+                            const bool has_overhang_wall = std::any_of(islands.begin(), islands.end(), [](const ExtrusionEntity *island) {
+                                const ExtrusionEntitiesPtr &walls = static_cast<const ExtrusionEntityCollection*>(island)->entities;
+                                return std::any_of(walls.begin(), walls.end(), [](const ExtrusionEntity *ee) { return is_all_overhang(*ee); });
+                            });
+                            if (has_overhang_wall)
+                                layer_tools.extruders.emplace_back(region.config().overhang_wall_filament.value);
+                        }
+                        if (region.config().gap_fill_filament.value > 0) {
+                            const bool has_gap_fill = std::any_of(islands.begin(), islands.end(), [](const ExtrusionEntity *island) {
+                                const ExtrusionEntitiesPtr &walls = static_cast<const ExtrusionEntityCollection*>(island)->entities;
+                                return std::any_of(walls.begin(), walls.end(), [](const ExtrusionEntity *ee) { return ee->role() == erGapFill; });
+                            });
+                            if (has_gap_fill)
+                                layer_tools.extruders.emplace_back(region.config().gap_fill_filament.value);
+                        }
+                    }
                     if (layerCount == 0) {
                         firstLayerExtruders.emplace_back((extruder_override == 0) ? region.config().outer_wall_filament_id.value : extruder_override);
                     }

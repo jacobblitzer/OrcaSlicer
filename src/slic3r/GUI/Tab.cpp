@@ -3401,6 +3401,12 @@ void TabPrint::build()
         optgroup->append_single_option_line("internal_solid_filament_id", "multimaterial_settings_filament_for_features#internal-solid-infill");
         optgroup->append_single_option_line("top_surface_filament_id", "multimaterial_settings_filament_for_features#top-surface");
         optgroup->append_single_option_line("bottom_surface_filament_id", "multimaterial_settings_filament_for_features#bottom-surface");
+        optgroup->append_single_option_line("overhang_wall_filament", "multimaterial_settings_filament_for_features");
+        optgroup->append_single_option_line("gap_fill_filament", "multimaterial_settings_filament_for_features");
+        optgroup->append_single_option_line("bridge_filament", "multimaterial_settings_filament_for_features");
+        optgroup->append_single_option_line("internal_bridge_filament", "multimaterial_settings_filament_for_features");
+        optgroup->append_single_option_line("ironing_filament", "multimaterial_settings_filament_for_features");
+        optgroup->append_single_option_line("skirt_filament", "multimaterial_settings_filament_for_features");
         optgroup->append_single_option_line("wipe_tower_filament", "multimaterial_settings_filament_for_features#wipe-tower");
 
         optgroup = page->new_optgroup(L("Ooze prevention"), L"param_ooze_prevention");
