@@ -98,6 +98,20 @@ void PrintRegion::collect_object_printing_extruders(const PrintConfig &print_con
     	emplace_extruder(region_config.top_surface_filament_id);
     if (region_config.bottom_shell_layers.value > 0)
     	emplace_extruder(region_config.bottom_surface_filament_id);
+    // Orca: per-feature overrides. 0 means inherit, so only a set value brings in a filament
+    // of its own; leaving it out here would print the feature without ever counting its filament.
+    if (region_config.wall_loops.value > 0 || has_brim) {
+        if (region_config.overhang_wall_filament.value > 0)
+            emplace_extruder(region_config.overhang_wall_filament);
+        if (region_config.gap_fill_filament.value > 0)
+            emplace_extruder(region_config.gap_fill_filament);
+    }
+    if (region_config.bridge_filament.value > 0)
+        emplace_extruder(region_config.bridge_filament);
+    if (region_config.internal_bridge_filament.value > 0)
+        emplace_extruder(region_config.internal_bridge_filament);
+    if (region_config.ironing_filament.value > 0)
+        emplace_extruder(region_config.ironing_filament);
 }
 
 void PrintRegion::collect_object_printing_extruders(const Print &print, std::vector<unsigned int> &object_extruders) const
@@ -113,6 +127,11 @@ void PrintRegion::collect_object_printing_extruders(const Print &print, std::vec
     assert(this->config().internal_solid_filament_id <= num_extruders);
     assert(this->config().top_surface_filament_id <= num_extruders);
     assert(this->config().bottom_surface_filament_id <= num_extruders);
+    assert(this->config().overhang_wall_filament   <= num_extruders);
+    assert(this->config().gap_fill_filament        <= num_extruders);
+    assert(this->config().bridge_filament          <= num_extruders);
+    assert(this->config().internal_bridge_filament <= num_extruders);
+    assert(this->config().ironing_filament         <= num_extruders);
 #endif
     collect_object_printing_extruders(print.config(), this->config(), print.has_brim(), object_extruders);
 }

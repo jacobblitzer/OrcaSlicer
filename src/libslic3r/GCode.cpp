@@ -5805,7 +5805,13 @@ namespace Skirt {
         // is left as a placeholder for when a multiextruder support is implemented. Then we will need to extrude the skirt loops for each extruder.
         //const PrintConfig &config = print.config();
         //if (config.min_skirt_length.value < EPSILON) {
-            skirt_loops_per_extruder_out[layer_tools.extruders.front()] = std::pair<size_t, size_t>(0, n_loops);
+            // Orca: skirt_filament prints the whole skirt, but only where that filament is already
+            // selected on the layer. Adding a tool here would sit outside the planned tool order.
+            const int          want_skirt   = print.config().skirt_filament.value;
+            const bool         want_is_live = want_skirt > 0 && std::find(layer_tools.extruders.begin(), layer_tools.extruders.end(),
+                                                                         unsigned(want_skirt)) != layer_tools.extruders.end();
+            const unsigned int skirt_filament = want_is_live ? unsigned(want_skirt) : layer_tools.extruders.front();
+            skirt_loops_per_extruder_out[skirt_filament] = std::pair<size_t, size_t>(0, n_loops);
         //} else {
         //    for (size_t i = 0; i < n_loops; i += lines_per_extruder)
         //        skirt_loops_per_extruder_out[layer_tools.extruders[i / lines_per_extruder]] = std::pair<size_t, size_t>(i, std::min(i + lines_per_extruder, n_loops));

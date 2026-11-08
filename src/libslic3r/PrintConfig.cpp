@@ -6789,6 +6789,15 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionInt(1));
 
+    def = this->add("skirt_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Skirt");
+    def->category = L("Extruders");
+    def->tooltip = L("Filament to print the skirt. It is used only on layers where that filament is already printing, so the skirt never forces a filament change.\n\"Default\" uses the first filament active on the layer.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
     def = this->add("skirt_speed", coFloat);
     def->label = L("Skirt speed");
     def->full_label = L("Skirt speed");
@@ -6851,6 +6860,51 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Bottom surface");
     def->category = L("Extruders");
     def->tooltip = L("Filament to print bottom surface.\n\"Default\" uses the active object/part filament.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("overhang_wall_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Overhang wall");
+    def->category = L("Extruders");
+    def->tooltip = L("Filament to print overhang walls.\n\"Default\" follows Inner wall.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("gap_fill_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Gap fill");
+    def->category = L("Extruders");
+    def->tooltip = L("Filament to print gap fill.\n\"Default\" follows Inner wall.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("bridge_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Bridge");
+    def->category = L("Extruders");
+    def->tooltip = L("Filament to print bridges.\n\"Default\" follows Internal solid infill.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("internal_bridge_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Internal bridge");
+    def->category = L("Extruders");
+    def->tooltip = L("Filament to print internal bridges.\n\"Default\" follows Bridge.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("ironing_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Ironing");
+    def->category = L("Extruders");
+    def->tooltip = L("Filament to print ironing.\n\"Default\" follows Internal solid infill.");
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));

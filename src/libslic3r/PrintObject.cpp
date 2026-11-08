@@ -4286,6 +4286,14 @@ static void clamp_feature_filament_to_valid(ConfigOptionInt &opt, size_t num_ext
         opt.value = 1;
 }
 
+// Orca: a per-feature override keeps 0 as "inherit the base feature's filament", so unlike
+// clamp_feature_filament_to_valid() above, only an out-of-range value is reset - to 0, not 1.
+static void clamp_feature_override_to_valid(ConfigOptionInt &opt, size_t num_extruders)
+{
+    if (opt.value < 0 || opt.value > (int)num_extruders)
+        opt.value = 0;
+}
+
 PrintObjectConfig PrintObject::object_config_from_model_object(const PrintObjectConfig &default_object_config, const ModelObject &object, size_t num_extruders, std::vector<int>& variant_index)
 {
     PrintObjectConfig config = default_object_config;
@@ -4429,6 +4437,11 @@ PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &defau
     clamp_feature_filament_to_valid(config.internal_solid_filament_id, num_extruders);
     clamp_feature_filament_to_valid(config.top_surface_filament_id, num_extruders);
     clamp_feature_filament_to_valid(config.bottom_surface_filament_id, num_extruders);
+    clamp_feature_override_to_valid(config.overhang_wall_filament, num_extruders);
+    clamp_feature_override_to_valid(config.gap_fill_filament, num_extruders);
+    clamp_feature_override_to_valid(config.bridge_filament, num_extruders);
+    clamp_feature_override_to_valid(config.internal_bridge_filament, num_extruders);
+    clamp_feature_override_to_valid(config.ironing_filament, num_extruders);
     if (config.sparse_infill_density.value < 0.00011f)
         // Switch of infill for very low infill rates, also avoid division by zero in infill generator for these very low rates.
         // See GH issue #5910.

@@ -1558,6 +1558,14 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt, internal_solid_filament_id))
     ((ConfigOptionInt, top_surface_filament_id))
     ((ConfigOptionInt, bottom_surface_filament_id))
+    // Per-feature filament overrides. 0 means inherit: overhang walls and gap fill
+    // follow inner_wall_filament_id, bridges and ironing follow internal_solid_filament_id,
+    // and internal bridges follow bridge_filament.
+    ((ConfigOptionInt, overhang_wall_filament))
+    ((ConfigOptionInt, gap_fill_filament))
+    ((ConfigOptionInt, bridge_filament))
+    ((ConfigOptionInt, internal_bridge_filament))
+    ((ConfigOptionInt, ironing_filament))
     ((ConfigOptionFloatOrPercent, internal_solid_infill_line_width))
     ((ConfigOptionFloatsNullable, internal_solid_infill_speed))
     // Detect thin walls.
@@ -2076,6 +2084,8 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloat,              skirt_distance))
     ((ConfigOptionInt,                skirt_height))
     ((ConfigOptionInt,                skirt_loops))
+    // 0 means use the first extruder active on the layer.
+    ((ConfigOptionInt,                skirt_filament))
     ((ConfigOptionEnum<SkirtType>,    skirt_type))
     ((ConfigOptionFloat,              skirt_speed))
     ((ConfigOptionBool,               single_loop_draft_shield))
