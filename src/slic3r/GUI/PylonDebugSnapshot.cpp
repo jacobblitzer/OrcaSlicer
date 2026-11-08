@@ -1,6 +1,7 @@
 #include "PylonDebugSnapshot.hpp"
 
 #include "GUI_App.hpp"
+#include "BuildCommit.hpp"
 #include "PartPlate.hpp"
 #include "Plater.hpp"
 #include "../slic3r/GUI/I18N.hpp"
@@ -36,6 +37,9 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+
+// Orca: the alias this file used to pick up transitively from a GUI header.
+namespace fs = boost::filesystem;
 
 namespace Slic3r { namespace GUI {
 
@@ -121,7 +125,9 @@ static std::string render_environment()
     s << "SoftFever_VERSION      = " << SoftFever_VERSION << "\n";
     s << "SLIC3R_VERSION         = " << SLIC3R_VERSION    << "\n";
     s << "SLIC3R_BUILD_ID        = " << SLIC3R_BUILD_ID   << "\n";
-    s << "GIT_COMMIT_HASH        = " << GIT_COMMIT_HASH   << "\n";
+    // Orca: build_commit_label rather than the GIT_COMMIT_HASH macro - upstream moved the
+    // generated header behind BuildCommit.hpp so a new commit does not rebuild every TU.
+    s << "build commit           = " << Slic3r::GUI::build_commit_label << "\n";
     s << "\n";
     s << "Platform / OS\n";
     s << "-------------\n";
